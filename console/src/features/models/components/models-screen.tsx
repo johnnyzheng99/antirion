@@ -206,6 +206,8 @@ export function ModelsScreen() {
   const loadedAt = useModels((s) => s.loadedAt);
   const fetch = useModels((s) => s.fetch);
   const views = useModelViews();
+  // A Model that follows a shared route is listed on the Routing tab, not with the Models.
+  const listed = useMemo(() => views.filter((v) => !v.model.spec.route), [views]);
   const providers = useProviderMap();
   const providersSlot = useCatalog((s) => s.providers);
   const loadProviders = useCatalog((s) => s.loadProviders);
@@ -236,10 +238,10 @@ export function ModelsScreen() {
         v.leaves.map((l) => prices[l]),
         'output',
       );
-    return filterModels(views, filters, measures, outputPrice);
+    return filterModels(listed, filters, measures, outputPrice);
     // `filters` is rebuilt from the URL on every render; its parts are the dependencies.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [views, url.filters, measures, prices]);
+  }, [listed, url.filters, measures, prices]);
   const starred = useStarredFilter('model');
   const starredNames = useFavouriteNames('model');
   const visible = starred.apply(filteredModels, (v) => v.name);
@@ -322,7 +324,7 @@ export function ModelsScreen() {
           value={tab}
           onChange={setTab}
           items={[
-            { value: 'models', label: 'Models', count: views.length, icon: 'cube' },
+            { value: 'models', label: 'Models', count: listed.length, icon: 'cube' },
             {
               value: 'aliases',
               label: 'Aliases',
@@ -454,7 +456,7 @@ export function ModelsScreen() {
                 </div>
                 <StarredFilter kind="model" pressed={starred.on} onChange={starred.set} />
                 <span className="whitespace-nowrap">
-                  <CountNote shown={visible.length} total={views.length} noun="models" />
+                  <CountNote shown={visible.length} total={listed.length} noun="models" />
                 </span>
               </div>
             </FilterBar>
@@ -486,7 +488,12 @@ export function ModelsScreen() {
             <MasterDetail
               className="max-lg:grid-cols-1"
               list={
-                visible.length === 0 ? (
+                listed.length === 0 ? (
+                  <EmptyState
+                    title="Every model follows a shared route"
+                    description="They are listed on the Routing tab."
+                  />
+                ) : visible.length === 0 ? (
                   <NoMatch
                     onClear={() => {
                       url.clear();
@@ -531,8 +538,15 @@ export function ModelsScreen() {
           mode={drawer === 'route' ? 'route' : 'model'}
           onClose={() => setDrawer(null)}
           onAdded={(name) => {
-            // Show what was added: back to the list, on the new model, with the activity reread.
+            // Show what was added, with the activity reread: a route on the Routing tab, where routes
+            // are listed, and a model back on the list.
             const search = new URLSearchParams(window.location.search);
+            if (drawer === 'route') {
+              search.set('tab', 'routing');
+              router.replace(`${pathname}?${search.toString()}`, { scroll: false });
+              void useCatalog.getState().loadCatalogAudit();
+              return;
+            }
             search.delete('tab');
             search.set('model', name);
             router.replace(`${pathname}?${search.toString()}`, { scroll: false });
