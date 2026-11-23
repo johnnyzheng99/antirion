@@ -275,4 +275,23 @@ describe('Providers › edit a provider', () => {
       expect(patched).toEqual({ spec: { account_tier: 'Tier 5', base_url: 'https://eu.api.openai.com/v1' } }),
     );
   });
+
+  it('turns Unrestricted on with a patch of that capability alone', async () => {
+    const patches: unknown[] = [];
+    let current: unknown = single;
+    server.use(
+      http.patch('*/admin/v1/providers/openai', async ({ request }) => {
+        patches.push(await request.json());
+        current = { ...single, spec: { ...single.spec, capabilities: { unrestricted: true } } };
+        return HttpResponse.json({ ...(current as object), metadata: { ...meta, etag: '"2"' } });
+      }),
+    );
+    setup(single);
+    const drawer = await openDrawer();
+    const box = within(drawer).getByRole('checkbox', { name: /^Unrestricted/ });
+    expect(box).not.toBeChecked();
+    await userEvent.click(box);
+    await userEvent.click(within(drawer).getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(patches).toEqual([{ spec: { capabilities: { unrestricted: true } } }]));
+  });
 });

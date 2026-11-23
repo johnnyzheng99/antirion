@@ -7,7 +7,7 @@ import { Button, IconButton } from '@/components/ui/button';
 import { Meter } from '@/components/ui/charts';
 import { ConfirmDialog } from '@/components/ui/confirm';
 import { useCan } from '@/components/ui/gate';
-import { Field, Input, NumberInput, Segmented, Select, Textarea } from '@/components/ui/form';
+import { Checkbox, Field, Input, NumberInput, Segmented, Select, Textarea } from '@/components/ui/form';
 import { Drawer } from '@/components/ui/overlay';
 import { InlineError } from '@/components/ui/states';
 import { ProviderMark } from '@/components/ui/marks';
@@ -687,6 +687,14 @@ function SettingsFields({
           onChange={(e) => onChange({ params: e.target.value })}
         />
       </Field>
+      <div className="sm:col-span-2">
+        <Checkbox
+          checked={draft.unrestricted}
+          onChange={(on) => onChange({ unrestricted: on })}
+          label="Unrestricted"
+          description="Serve every endpoint and request feature without checking capabilities. Requests reach the provider as the app sent them, and the provider’s own answer decides. A deployment can turn this off for itself."
+        />
+      </div>
     </fieldset>
   );
 }

@@ -21,6 +21,7 @@ export type VertexPublisher = '' | 'google' | 'anthropic';
 
 /** The capability switches the editor shows; any other capability is kept as written. */
 export const CAPABILITY_FLAGS = [
+  { name: 'unrestricted', label: 'Unrestricted' },
   { name: 'streaming', label: 'Streaming' },
   { name: 'tools', label: 'Tools' },
   { name: 'vision', label: 'Images in prompts' },
