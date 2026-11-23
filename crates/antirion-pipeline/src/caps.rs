@@ -161,6 +161,9 @@ pub(crate) fn required(endpoint: &Endpoint, parsed: &Parsed) -> Vec<Need> {
 
 /// The needs `deployment` does not satisfy, in order.
 pub(crate) fn missing(deployment: &DeploymentRt, needs: &[Need]) -> Vec<Need> {
+    if deployment.capabilities.unrestricted() {
+        return Vec::new();
+    }
     needs
         .iter()
         .filter(|n| match (n.operation, n.at_least) {

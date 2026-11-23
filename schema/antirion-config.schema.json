@@ -1243,6 +1243,11 @@
       "type": "object",
       "description": "Capability flags; any subset.",
       "properties": {
+        "unrestricted": {
+          "type": "boolean",
+          "default": false,
+          "description": "Serve every endpoint and request feature: no capability check excludes the deployment, and requests reach it as the client sent them."
+        },
         "dialects": {
           "type": "array",
           "items": {

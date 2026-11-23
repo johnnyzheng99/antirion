@@ -69,6 +69,7 @@ pub const FLAGS: &[&str] = &[
     "audio_formats",
     "count_tokens_native",
     "responses_native",
+    "unrestricted",
 ];
 
 /// Every operation class, in table order.
@@ -213,6 +214,7 @@ impl Capabilities {
                     .copied()
                     .collect::<Vec<_>>(),
             ),
+            "unrestricted" => Value::Bool(false),
             "n_multiple" | "logprobs" | "json_mode" => Value::Bool(!self.anthropic_like()),
             "context_window"
             | "max_input_tokens"
@@ -296,9 +298,24 @@ impl Capabilities {
         }
     }
 
+    /// Whether the deployment is unrestricted (`capabilities.unrestricted: true` on it or its
+    /// provider): it serves every operation and every request feature, so no capability check
+    /// excludes it and requests reach it as the client sent them.
+    #[must_use]
+    pub fn unrestricted(&self) -> bool {
+        self.deployment
+            .get("unrestricted")
+            .or_else(|| self.provider.get("unrestricted"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    }
+
     /// Whether the deployment serves an operation class.
     #[must_use]
     pub fn operation(&self, class: &str) -> bool {
+        if self.unrestricted() {
+            return true;
+        }
         for layer in [&self.deployment, &self.provider, &self.catalog] {
             if let Some(list) = layer.get("operations").and_then(Value::as_array) {
                 return list.iter().any(|o| o.as_str() == Some(class));
