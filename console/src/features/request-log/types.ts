@@ -846,3 +846,32 @@ export function filterChips(f: LogFilters): FilterChip[] {
 export function hasUsage(r: LogRecord): boolean {
   return r.usage.input != null || r.usage.output != null;
 }
+
+/** One change a provider's or deployment's `params` made to the upstream body. */
+export interface ParamChange {
+  source: string;
+  /** `removed`, `default` or `override`. */
+  action: string;
+  pointer: string;
+  /** What the entry set; absent for a removal. */
+  value?: unknown;
+  /** What the app's body had there (null when absent); absent unless content is logged. */
+  previous?: unknown;
+}
+
+/** The `params` changes of a record, in the order they were applied. */
+export function paramChanges(record: { params_applied?: Record<string, unknown> | null }): ParamChange[] {
+  const list = record.params_applied?.changes;
+  if (!Array.isArray(list)) return [];
+  return list.filter(
+    (c): c is ParamChange =>
+      typeof c === 'object' && c !== null && typeof (c as ParamChange).pointer === 'string',
+  );
+}
+
+/** A logged value in a line: JSON, with absent shown as a dash. */
+export function paramValue(v: unknown): string {
+  if (v === undefined) return '—';
+  if (v === null) return 'not set';
+  return JSON.stringify(v);
+}

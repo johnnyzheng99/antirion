@@ -25,7 +25,16 @@ import { useShell } from '@/stores/shell';
 
 import { useLogs } from '../store';
 import { requestMessages, responseView, storedBody } from '../transcript';
-import { cacheStatus, costUsd, flags, latencyMs, protocolCall, ttftMs } from '../types';
+import {
+  cacheStatus,
+  costUsd,
+  flags,
+  latencyMs,
+  paramChanges,
+  paramValue,
+  protocolCall,
+  ttftMs,
+} from '../types';
 import { CodeBlock as Json, MessagesTab, RequestTab, ResponseTab } from './drawer-content';
 import { ReplayDialog } from './replay-dialog';
 import { EraseEndUserButton } from './erase-end-user';
@@ -290,6 +299,54 @@ function guardrailVerdict(g: Record<string, unknown>): string {
 }
 
 /** Replay: offered to operators who may send through the playground and read content. */
+const PARAM_ACTION: Record<string, string> = {
+  removed: 'Removed',
+  default: 'Default added',
+  override: 'Replaced',
+};
+
+/** The provider's and deployment's `params` changes to the upstream body of the final attempt. */
+function ParamChanges({ record }: { record: LogRecord }) {
+  const changes = paramChanges(record);
+  if (changes.length === 0) return null;
+  const withPrevious = changes.some((c) => 'previous' in c);
+  return (
+    <Section title="Request parameters changed" aside={`${String(changes.length)} by configuration`}>
+      <Table label="Request parameters changed">
+        <thead>
+          <tr>
+            <Th>Parameter</Th>
+            <Th>Change</Th>
+            <Th>From</Th>
+            {withPrevious ? <Th>App sent</Th> : null}
+            <Th>Sent upstream</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {changes.map((c, i) => (
+            <Tr key={`${c.source}${c.pointer}${String(i)}`}>
+              <Td mono>{c.pointer}</Td>
+              <Td>{PARAM_ACTION[c.action] ?? capitalize(c.action)}</Td>
+              <Td muted>{capitalize(c.source)}</Td>
+              {withPrevious ? (
+                <Td mono muted>
+                  {paramValue(c.previous)}
+                </Td>
+              ) : null}
+              <Td mono>{c.action === 'removed' ? 'removed' : paramValue(c.value)}</Td>
+            </Tr>
+          ))}
+        </tbody>
+      </Table>
+      {withPrevious ? null : (
+        <p className="mt-1.5 text-caption text-muted">
+          What the app sent is shown when content logging is on for this request.
+        </p>
+      )}
+    </Section>
+  );
+}
+
 function ReplayButton({ record, onOpenRecord }: { record: LogRecord; onOpenRecord: (id: string) => void }) {
   const canSend = usePermission('playground:send');
   const canRead = usePermission('logs:read_content');
@@ -643,6 +700,8 @@ export function LogDrawer({
                     </tbody>
                   </Table>
                 </Section>
+
+                <ParamChanges record={r} />
 
                 <Section title="Distributed trace">
                   <div className="flex flex-wrap items-center gap-2">
