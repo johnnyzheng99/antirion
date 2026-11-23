@@ -8,8 +8,11 @@ import { collectLeaves } from './types';
 export interface AddModelValues {
   name: string;
   displayName: string;
-  deploymentMode: 'new' | 'existing';
+  /** A provider's model on a new deployment, an unused deployment, or a shared route. */
+  deploymentMode: 'new' | 'existing' | 'route';
   existingDeployment: string;
+  /** The shared route a Model added in route mode follows. */
+  route: string;
   provider: string;
   upstreamModel: string;
   tier: string;
@@ -26,6 +29,7 @@ export const EMPTY_ADD_MODEL: AddModelValues = {
   displayName: '',
   deploymentMode: 'new',
   existingDeployment: '',
+  route: '',
   provider: '',
   upstreamModel: '',
   tier: 'balanced',
@@ -72,8 +76,9 @@ export const addModelSchema = z
   .object({
     name: modelName,
     displayName: z.string().trim().max(200, 'Use at most 200 characters'),
-    deploymentMode: z.enum(['new', 'existing']),
+    deploymentMode: z.enum(['new', 'existing', 'route']),
     existingDeployment: z.string(),
+    route: z.string(),
     provider: z.string(),
     upstreamModel: z.string().trim(),
     tier: z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/, 'Select a tier'),
@@ -85,6 +90,8 @@ export const addModelSchema = z
     accessTeams: teamList,
   })
   .superRefine((v, ctx) => {
+    if (v.deploymentMode === 'route' && !v.route)
+      ctx.addIssue({ code: 'custom', path: ['route'], message: 'Select a shared route' });
     if (v.deploymentMode === 'existing' && !v.existingDeployment)
       ctx.addIssue({ code: 'custom', path: ['existingDeployment'], message: 'Select a deployment' });
     if (v.deploymentMode === 'new') {

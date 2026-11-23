@@ -216,3 +216,47 @@ describe('Add model › source', () => {
     expect(options.map((o) => o.textContent)).toEqual(['legacy-davinci · openai/legacy-davinci']);
   });
 });
+
+describe('Add route', () => {
+  function setupRoute(routes: { name: string; spec: { tree: unknown }; metadata: typeof meta }[]) {
+    signInAs(['models:read', 'models:write', 'providers:read', 'deployments:write']);
+    useCatalog.setState({
+      providers: { data: [], status: 'ready', error: null, at: Date.now() },
+      deployments: { data: [], status: 'ready', error: null, at: Date.now() },
+      routes: { data: routes, status: 'ready', error: null, at: Date.now() },
+      tiers: emptySlot(),
+    });
+    useModels.setState({ items: [], status: 'ready', error: null, loadedAt: Date.now() });
+    render(<AddModelDrawer open mode="route" onClose={() => undefined} onAdded={() => undefined} />);
+    return screen.getByRole('dialog', { name: 'Add route' });
+  }
+
+  it('adds a Model that follows the chosen shared route, with no deployment or price', async () => {
+    const posted: unknown[] = [];
+    server.use(
+      http.post('*/admin/v1/models', async ({ request }) => {
+        const body = (await request.json()) as { name: string; spec: unknown };
+        posted.push(body);
+        return HttpResponse.json({ ...body, metadata: meta }, { status: 201 });
+      }),
+    );
+    const drawer = setupRoute([{ name: 'smart', spec: { tree: 'gpt-4o' }, metadata: meta }]);
+    expect(within(drawer).queryByRole('combobox', { name: /^Provider/ })).not.toBeInTheDocument();
+    expect(within(drawer).queryByLabelText(/^Input price/)).not.toBeInTheDocument();
+    await pickOption(within(drawer).getByRole('combobox', { name: /^Shared route/ }), /^smart/);
+    expect(within(drawer).getByLabelText(/^Name/)).toHaveValue('smart');
+    await userEvent.click(within(drawer).getByRole('button', { name: 'Add route' }));
+    await waitFor(() => expect(posted).toHaveLength(1));
+    const spec = (posted[0] as { spec: Record<string, unknown> }).spec;
+    expect(spec.route).toBe('smart');
+    expect(spec).not.toHaveProperty('target');
+  });
+
+  it('asks for a route before saving, and says when there are none', async () => {
+    const drawer = setupRoute([]);
+    expect(within(drawer).getByText(/There are no shared routes yet/)).toBeInTheDocument();
+    await userEvent.type(within(drawer).getByLabelText(/^Name/), 'smart');
+    await userEvent.click(within(drawer).getByRole('button', { name: 'Add route' }));
+    expect(await within(drawer).findByText('Select a shared route')).toBeInTheDocument();
+  });
+});

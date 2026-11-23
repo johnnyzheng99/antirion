@@ -219,7 +219,7 @@ export function ModelsScreen() {
   const url = useUrlFilters(MODEL_FILTER_DEFAULTS);
   const filters = toModelFilters(url.filters);
   const [selected, setSelected] = useQueryParam('model');
-  const [drawer, setDrawer] = useState<'add' | 'edit' | 'lifecycle' | 'provider' | null>(null);
+  const [drawer, setDrawer] = useState<'add' | 'route' | 'edit' | 'lifecycle' | 'provider' | null>(null);
 
   const measures = useMemo(() => {
     if (!usage.data) return null;
@@ -336,7 +336,9 @@ export function ModelsScreen() {
         />
       ) : null}
       {tab === 'aliases' && views.length > 0 ? <AliasesTab views={views} onOpenModel={openModel} /> : null}
-      {tab === 'routing' && views.length > 0 ? <RoutingTab views={views} onOpenModel={openModel} /> : null}
+      {tab === 'routing' && views.length > 0 ? (
+        <RoutingTab views={views} onOpenModel={openModel} onAddRoute={() => setDrawer('route')} />
+      ) : null}
       {tab === 'policy' && views.length > 0 ? <PolicyTab views={views} /> : null}
       {tab === 'activity' && views.length > 0 ? <ActivityTab onOpenModel={openModel} /> : null}
       {tab === 'models' || views.length === 0 ? (
@@ -523,9 +525,10 @@ export function ModelsScreen() {
           {views.length > 0 ? <KeyboardHints keys={['search', 'move', 'open', 'export', 'new']} /> : null}
         </>
       ) : null}
-      {drawer === 'add' ? (
+      {drawer === 'add' || drawer === 'route' ? (
         <AddModelDrawer
           open
+          mode={drawer === 'route' ? 'route' : 'model'}
           onClose={() => setDrawer(null)}
           onAdded={(name) => {
             // Show what was added: back to the list, on the new model, with the activity reread.

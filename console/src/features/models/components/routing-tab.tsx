@@ -5,8 +5,9 @@ import { useEffect, useState } from 'react';
 
 import { useScopedHref } from '@/components/layout/url-sync';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Meter } from '@/components/ui/charts';
-import { useCan } from '@/components/ui/gate';
+import { Gate, useCan } from '@/components/ui/gate';
 import { Section } from '@/components/ui/layout';
 import { EmptyState } from '@/components/ui/states';
 import { Table, Td, Th, Tr } from '@/components/ui/table';
@@ -74,9 +75,12 @@ function chainOf(
 export function RoutingTab({
   views,
   onOpenModel,
+  onAddRoute,
 }: {
   views: ModelView[];
   onOpenModel: (name: string) => void;
+  /** Opens "Add route": a new Model that follows a shared route. */
+  onAddRoute: () => void;
 }) {
   const routes = useRouteMap();
   const routingHref = useScopedHref('/routing/');
@@ -130,14 +134,21 @@ export function RoutingTab({
 
   return (
     <div className="flex flex-col">
-      <p className="border-b border-line bg-raised px-5 py-3 text-ui text-muted max-sm:px-gutter-sm">
-        Rules are tried in order and the first that matches sends the request; each target lists its
-        fallbacks. Edit rules on the{' '}
-        <Link href={routingHref} className="text-accent hover:underline">
-          Routing policy
-        </Link>{' '}
-        screen.
-      </p>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-raised px-5 py-3 max-sm:px-gutter-sm">
+        <p className="min-w-0 flex-[1_1_20rem] text-ui text-muted">
+          Rules are tried in order and the first that matches sends the request; each target lists its
+          fallbacks. Edit rules on the{' '}
+          <Link href={routingHref} className="text-accent hover:underline">
+            Routing policy
+          </Link>{' '}
+          screen.
+        </p>
+        <Gate operation="createModel" mode="hide">
+          <Button size="sm" icon="plus" onClick={onAddRoute}>
+            Add route
+          </Button>
+        </Gate>
+      </div>
       {usage === 'error' ? (
         <p className="border-b border-line px-5 py-2 text-caption text-muted max-sm:px-gutter-sm">
           The share of the last 24 hours couldn’t be read.

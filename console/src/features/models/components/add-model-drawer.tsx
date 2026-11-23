@@ -31,7 +31,8 @@ import {
   unusedDeployments,
 } from '../form';
 import { fromPerMillion, toPerMillion } from '../catalog';
-import { useEffectivePrice } from '../hooks';
+import { useEffectivePrice, useRouteMap } from '../hooks';
+import { describeNode } from '../tree';
 import { addModel, useCatalog, useModels } from '../store';
 import { BUILTIN_TIERS, rate, tierLabel } from '../types';
 
@@ -95,17 +96,27 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 /**
  * "Add model": a provider's model, on a new deployment or an existing one, under the name apps
  * send. Prices come from the list prices unless set; a provider can be added from here.
+ *
+ * With `mode="route"` ("Add route"), the Model follows a shared route instead: it takes the route's
+ * rules and fallbacks, so there is no provider, deployment or price to choose.
  */
 export function AddModelDrawer({
   open,
   onClose,
   onAdded,
+  mode = 'model',
 }: {
   open: boolean;
   onClose: () => void;
   onAdded: (name: string) => void;
+  mode?: 'model' | 'route';
 }) {
-  const [values, setValues] = useState<AddModelValues>(EMPTY_ADD_MODEL);
+  const routeMode = mode === 'route';
+  const initial: AddModelValues = routeMode
+    ? { ...EMPTY_ADD_MODEL, deploymentMode: 'route' }
+    : EMPTY_ADD_MODEL;
+  const [values, setValues] = useState<AddModelValues>(initial);
+  const routeMap = useRouteMap();
   const [nameTouched, setNameTouched] = useState(false);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [error, setError] = useState<unknown>(null);
@@ -150,6 +161,11 @@ export function AddModelDrawer({
       name: nameTouched ? v.name : suggestedName(upstream),
     }));
     setErrors(({ upstreamModel: _u, name: _n, ...rest }) => rest);
+  };
+
+  const pickRoute = (name: string) => {
+    setValues((v) => ({ ...v, route: name, name: nameTouched ? v.name : name }));
+    setErrors(({ route: _r, name: _n, ...rest }) => rest);
   };
 
   const pickDeployment = (name: string) => {
@@ -221,7 +237,11 @@ export function AddModelDrawer({
   const usesCatalog =
     catalog !== null && values.inputPrice === catalog.input && values.outputPrice === catalog.output;
 
-  const priced = values.deploymentMode === 'existing' ? values.existingDeployment : reuse?.name;
+  const priced = routeMode
+    ? undefined
+    : values.deploymentMode === 'existing'
+      ? values.existingDeployment
+      : reuse?.name;
   const catalogPrice = useEffectivePrice(priced || undefined);
   const tokenPrice = useTokenPrice();
 
@@ -240,9 +260,10 @@ export function AddModelDrawer({
       await addModel({
         name: v.name,
         spec: toModelSpec(v),
-        existingDeployment: existing,
+        ...(routeMode ? { route: v.route } : {}),
+        existingDeployment: routeMode ? null : existing,
         deployment:
-          existing === null
+          !routeMode && existing === null
             ? {
                 name: deploymentNameFor(v.provider, v.upstreamModel),
                 provider: v.provider,
@@ -260,9 +281,9 @@ export function AddModelDrawer({
               }
             : null,
       });
-      notify('success', 'Model added', `Apps can call it as ${v.name}.`);
+      notify('success', routeMode ? 'Route added' : 'Model added', `Apps can call it as ${v.name}.`);
       onAdded(v.name);
-      setValues(EMPTY_ADD_MODEL);
+      setValues(initial);
       setPrefilled(null);
       onClose();
     } catch (e) {
@@ -281,14 +302,18 @@ export function AddModelDrawer({
         dirty={edited}
         open={open && !addingProvider}
         onClose={onClose}
-        title="Add model"
-        subtitle="Make a provider’s model available to your apps."
+        title={routeMode ? 'Add route' : 'Add model'}
+        subtitle={
+          routeMode
+            ? 'Give apps a model name that follows a shared route, with its rules and fallbacks.'
+            : 'Make a provider’s model available to your apps.'
+        }
         width="lg"
         footer={
           <>
             <CancelButton />
             <Button variant="primary" busy={busy} onClick={() => void submit()}>
-              Add model
+              {routeMode ? 'Add route' : 'Add model'}
             </Button>
           </>
         }
@@ -302,135 +327,163 @@ export function AddModelDrawer({
           }}
         >
           <InlineError error={error} />
-          <Section title="Source">
-            {unused.length > 0 ? (
-              <Segmented<'new' | 'existing'>
-                label="Source"
-                value={values.deploymentMode}
-                onChange={(m) => set('deploymentMode', m)}
-                options={[
-                  { value: 'new', label: 'New from a provider' },
-                  { value: 'existing', label: `Unused deployment (${String(unused.length)})` },
-                ]}
-              />
-            ) : null}
-            {values.deploymentMode === 'new' ? (
-              <div className="grid gap-4 sm:grid-cols-2">
-                <Field
-                  label="Provider"
-                  error={errors.provider}
-                  required
-                  aside={
-                    canAddProvider && providers.length > 0 ? (
-                      <button
-                        type="button"
-                        className="text-caption text-accent hover:underline"
-                        onClick={() => setAddingProvider(true)}
-                      >
-                        Add provider
-                      </button>
-                    ) : undefined
-                  }
-                  hint={noProviders ? 'No providers yet. Add one to continue.' : undefined}
-                >
-                  <Combobox
-                    value={values.provider}
-                    onChange={(v) => set('provider', v)}
-                    placeholder={noProviders ? 'No providers yet' : 'Select a provider'}
-                    disabled={noProviders}
-                    options={providers.map((p) => ({
-                      value: p.name,
-                      label: `${p.name} · ${providerTypeLabel(p.spec.type)}`,
-                      icon: <ProviderMark type={p.spec.type} size="md" />,
-                    }))}
-                    data-autofocus
-                  />
-                </Field>
-                <Field
-                  label="Provider’s model ID"
-                  error={errors.upstreamModel}
-                  required
-                  aside={
-                    values.provider ? (
-                      <button
-                        type="button"
-                        className="flex items-center gap-1 text-caption text-accent hover:underline disabled:text-muted disabled:no-underline"
-                        disabled={modelsEntry?.loading}
-                        onClick={() => void loadModels(values.provider, { refresh: true })}
-                      >
-                        <Icon name="refresh" size={12} />
-                        {modelsEntry?.loading ? 'Refreshing…' : 'Refresh list'}
-                      </button>
-                    ) : undefined
-                  }
-                  hint={
-                    <>
-                      {modelsEntry?.list?.error ? (
-                        <span className="block">
-                          The provider didn’t list its models, so this list comes from the catalog.
-                        </span>
-                      ) : null}
-                      {reuse
-                        ? `Uses the existing deployment ${reuse.name}.`
-                        : values.provider && values.upstreamModel
-                          ? `Creates the deployment ${deploymentNameFor(values.provider, values.upstreamModel)}.`
-                          : 'As the provider names it, e.g. gpt-4o-mini. Pick from the list or type any ID.'}
-                    </>
-                  }
-                >
-                  <Autocomplete
-                    mono
-                    value={values.upstreamModel}
-                    onChange={setUpstream}
-                    options={modelOptions}
-                    placeholder={values.provider ? 'Search or type an ID' : undefined}
-                    noMatch="Not in the list. You can still use this ID."
-                    status={
-                      !values.provider
-                        ? 'Choose a provider to see its models.'
-                        : modelsEntry?.loading && !modelsEntry.list
-                          ? 'Loading the provider’s models…'
-                          : modelsEntry?.error && !modelsEntry.list
-                            ? 'Couldn’t load the provider’s models. You can still type an ID.'
-                            : modelOptions.length > 0
-                              ? `Prices in USD per ${tokenPriceUnit} tokens, input and output.`
-                              : undefined
-                    }
-                  />
-                </Field>
-                {noProviders && canAddProvider ? (
-                  <div className="flex items-center gap-3 rounded-control border border-dashed border-line-strong px-3 py-2.5 sm:col-span-2">
-                    <span className="flex-1 text-ui text-muted">
-                      A model is served by a provider. Connect one first, with its API key.
-                    </span>
-                    <Button size="sm" icon="plus" onClick={() => setAddingProvider(true)}>
-                      Add provider
-                    </Button>
-                  </div>
-                ) : null}
-              </div>
-            ) : (
+          {routeMode ? (
+            <Section title="Shared route">
               <Field
-                label="Deployment"
-                error={errors.existingDeployment}
+                label="Shared route"
+                error={errors.route}
                 required
-                hint="A deployment set up in the configuration or left after its Model was deleted."
+                hint={
+                  routeMap.size === 0
+                    ? 'There are no shared routes yet. Create one in Routing policy first.'
+                    : "It follows the route's rules and fallbacks; changes to the route apply to it too."
+                }
               >
                 <Combobox
-                  value={values.existingDeployment}
-                  onChange={(v) => pickDeployment(v)}
-                  placeholder="Select a deployment"
-                  options={unused.map((d) => ({
-                    value: d.name,
-                    label: `${d.name} · ${d.spec.provider}/${d.spec.model}`,
+                  value={values.route}
+                  onChange={pickRoute}
+                  emptyOption="Select a route"
+                  disabled={routeMap.size === 0}
+                  options={[...routeMap.values()].map((r) => ({
+                    value: r.name,
+                    label: r.name,
+                    description: describeNode(r.spec.tree, routeMap),
                   }))}
+                  data-autofocus
                 />
               </Field>
-            )}
-            <p className="text-caption text-muted">
-              To call a model you already offer by another name, add an alias on that Model instead.
-            </p>
-          </Section>
+            </Section>
+          ) : (
+            <Section title="Source">
+              {unused.length > 0 ? (
+                <Segmented<'new' | 'existing'>
+                  label="Source"
+                  value={values.deploymentMode === 'existing' ? 'existing' : 'new'}
+                  onChange={(m) => set('deploymentMode', m)}
+                  options={[
+                    { value: 'new', label: 'New from a provider' },
+                    { value: 'existing', label: `Unused deployment (${String(unused.length)})` },
+                  ]}
+                />
+              ) : null}
+              {values.deploymentMode === 'new' ? (
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field
+                    label="Provider"
+                    error={errors.provider}
+                    required
+                    aside={
+                      canAddProvider && providers.length > 0 ? (
+                        <button
+                          type="button"
+                          className="text-caption text-accent hover:underline"
+                          onClick={() => setAddingProvider(true)}
+                        >
+                          Add provider
+                        </button>
+                      ) : undefined
+                    }
+                    hint={noProviders ? 'No providers yet. Add one to continue.' : undefined}
+                  >
+                    <Combobox
+                      value={values.provider}
+                      onChange={(v) => set('provider', v)}
+                      placeholder={noProviders ? 'No providers yet' : 'Select a provider'}
+                      disabled={noProviders}
+                      options={providers.map((p) => ({
+                        value: p.name,
+                        label: `${p.name} · ${providerTypeLabel(p.spec.type)}`,
+                        icon: <ProviderMark type={p.spec.type} size="md" />,
+                      }))}
+                      data-autofocus
+                    />
+                  </Field>
+                  <Field
+                    label="Provider’s model ID"
+                    error={errors.upstreamModel}
+                    required
+                    aside={
+                      values.provider ? (
+                        <button
+                          type="button"
+                          className="flex items-center gap-1 text-caption text-accent hover:underline disabled:text-muted disabled:no-underline"
+                          disabled={modelsEntry?.loading}
+                          onClick={() => void loadModels(values.provider, { refresh: true })}
+                        >
+                          <Icon name="refresh" size={12} />
+                          {modelsEntry?.loading ? 'Refreshing…' : 'Refresh list'}
+                        </button>
+                      ) : undefined
+                    }
+                    hint={
+                      <>
+                        {modelsEntry?.list?.error ? (
+                          <span className="block">
+                            The provider didn’t list its models, so this list comes from the catalog.
+                          </span>
+                        ) : null}
+                        {reuse
+                          ? `Uses the existing deployment ${reuse.name}.`
+                          : values.provider && values.upstreamModel
+                            ? `Creates the deployment ${deploymentNameFor(values.provider, values.upstreamModel)}.`
+                            : 'As the provider names it, e.g. gpt-4o-mini. Pick from the list or type any ID.'}
+                      </>
+                    }
+                  >
+                    <Autocomplete
+                      mono
+                      value={values.upstreamModel}
+                      onChange={setUpstream}
+                      options={modelOptions}
+                      placeholder={values.provider ? 'Search or type an ID' : undefined}
+                      noMatch="Not in the list. You can still use this ID."
+                      status={
+                        !values.provider
+                          ? 'Choose a provider to see its models.'
+                          : modelsEntry?.loading && !modelsEntry.list
+                            ? 'Loading the provider’s models…'
+                            : modelsEntry?.error && !modelsEntry.list
+                              ? 'Couldn’t load the provider’s models. You can still type an ID.'
+                              : modelOptions.length > 0
+                                ? `Prices in USD per ${tokenPriceUnit} tokens, input and output.`
+                                : undefined
+                      }
+                    />
+                  </Field>
+                  {noProviders && canAddProvider ? (
+                    <div className="flex items-center gap-3 rounded-control border border-dashed border-line-strong px-3 py-2.5 sm:col-span-2">
+                      <span className="flex-1 text-ui text-muted">
+                        A model is served by a provider. Connect one first, with its API key.
+                      </span>
+                      <Button size="sm" icon="plus" onClick={() => setAddingProvider(true)}>
+                        Add provider
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <Field
+                  label="Deployment"
+                  error={errors.existingDeployment}
+                  required
+                  hint="A deployment set up in the configuration or left after its Model was deleted."
+                >
+                  <Combobox
+                    value={values.existingDeployment}
+                    onChange={(v) => pickDeployment(v)}
+                    placeholder="Select a deployment"
+                    options={unused.map((d) => ({
+                      value: d.name,
+                      label: `${d.name} · ${d.spec.provider}/${d.spec.model}`,
+                    }))}
+                  />
+                </Field>
+              )}
+              <p className="text-caption text-muted">
+                To call a model you already offer by another name, add an alias on that Model instead.
+              </p>
+            </Section>
+          )}
           <Section title="Name">
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Name" error={errors.name} required hint="Apps send this name in the model field.">
@@ -507,7 +560,7 @@ export function AddModelDrawer({
               </div>
             </Section>
           ) : null}
-          {catalogPrice === null ? (
+          {routeMode ? null : catalogPrice === null ? (
             <p className="-mt-4 text-caption text-warn">
               There’s no list price for this deployment, so its spend isn’t counted and priced budgets refuse
               it. Set prices to fix that.
