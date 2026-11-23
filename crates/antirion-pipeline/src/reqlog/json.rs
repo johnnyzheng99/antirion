@@ -125,6 +125,11 @@ impl Settled {
                     .as_ref()
                     .map_or(&[], |p| p.overrides.as_slice()),
                 removed: rec.params_applied.as_ref().map_or(&[], |p| p.removed.as_slice()),
+                defaults: rec.params_applied.as_ref().map_or(&[], |p| p.defaults.as_slice()),
+                changes: Changes {
+                    changes: rec.params_applied.as_ref().map_or(&[], |p| p.changes.as_slice()),
+                    previous: include_content && rec.content.enabled && !rec.content.zdr,
+                },
             },
             cache: CacheJson {
                 status: rec.cache.status,
@@ -270,6 +275,56 @@ struct ContentJson<'a> {
 struct ParamsJson<'a> {
     overrides: &'a [String],
     removed: &'a [String],
+    defaults: &'a [String],
+    changes: Changes<'a>,
+}
+
+/// The `params` changes of the final attempt. The value an entry set comes from the configuration
+/// and is always shown; the value the client's body had there is content, shown only with content
+/// logging (and never under zero data retention).
+struct Changes<'a> {
+    changes: &'a [antirion_providers::params::Change],
+    previous: bool,
+}
+
+/// A logged value of at most this many bytes of JSON is shown whole; a larger one by its size.
+const MAX_PARAM_VALUE: usize = 1024;
+
+fn bounded(v: &Value) -> Value {
+    let len = serde_json::to_vec(v).map_or(0, |b| b.len());
+    if len <= MAX_PARAM_VALUE {
+        v.clone()
+    } else {
+        serde_json::json!({"omitted": true, "bytes": len})
+    }
+}
+
+impl Serialize for Changes<'_> {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::{SerializeMap, SerializeSeq};
+        struct One<'a>(&'a antirion_providers::params::Change, bool);
+        impl Serialize for One<'_> {
+            fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+                let c = self.0;
+                let mut m = s.serialize_map(None)?;
+                m.serialize_entry("source", c.source.as_str())?;
+                m.serialize_entry("action", c.action.as_str())?;
+                m.serialize_entry("pointer", &c.pointer)?;
+                if let Some(v) = &c.value {
+                    m.serialize_entry("value", &bounded(v))?;
+                }
+                if self.1 {
+                    m.serialize_entry("previous", &c.previous.as_ref().map(bounded))?;
+                }
+                m.end()
+            }
+        }
+        let mut seq = s.serialize_seq(Some(self.changes.len()))?;
+        for c in self.changes {
+            seq.serialize_element(&One(c, self.previous))?;
+        }
+        seq.end()
+    }
 }
 
 #[derive(Serialize)]

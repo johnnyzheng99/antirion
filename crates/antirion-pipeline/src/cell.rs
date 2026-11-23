@@ -248,13 +248,17 @@ pub(crate) fn operation_class(endpoint: &Endpoint) -> &'static str {
         ("moderations", _, _) => "moderate",
         ("audio", Some("/audio/speech"), _) => "speech",
         ("audio", _, _) => "transcribe",
+        ("systemone", _, _) => "systemone",
+        ("decisions", _, _) => "decide",
+        ("audio_tasks", _, _) => "audio_task",
+        ("custom", _, _) => "custom",
         _ if endpoint.counts_tokens() => "count_tokens",
         _ => "generate",
     }
 }
 
 /// What the upstream is asked to do in `cell`.
-pub(crate) fn upstream_op(endpoint: &Endpoint, cell: Cell) -> UpstreamOp<'static> {
+pub(crate) fn upstream_op(endpoint: &Endpoint, cell: Cell) -> UpstreamOp<'_> {
     match cell {
         Cell::Embed(api) => crate::embed::upstream_op(api, false),
         Cell::Rerank(api) => crate::embed::rerank_op(api),
@@ -313,7 +317,7 @@ pub(crate) fn upstream_op(endpoint: &Endpoint, cell: Cell) -> UpstreamOp<'static
             Dialect::BedrockInvoke => UpstreamOp::Invoke,
             _ => UpstreamOp::OpenAi {
                 class: operation_class(endpoint),
-                path: endpoint.upstream_path.unwrap_or("/chat/completions"),
+                path: endpoint.upstream().unwrap_or("/chat/completions"),
             },
         },
     }

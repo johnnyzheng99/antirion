@@ -128,7 +128,7 @@ fn segments(path: &str) -> Vec<String> {
     let rel = rel.split('?').next().unwrap_or_default();
     rel.split('/')
         .filter(|s| !s.is_empty())
-        .map(str::to_owned)
+        .map(crate::percent_decode)
         .collect()
 }
 

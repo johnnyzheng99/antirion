@@ -20289,9 +20289,13 @@ components:
             bound …
         params_applied:
           type: object
-          description: '`{overrides: array<string>, removed: array<string>}`: the JSON Pointers of ''s `params.overrides`
-            and `params.remove` entries applied to this request''s upstream body (final attempt), in application order. Empty
-            lists …'
+          description: '`{overrides: array<string>, removed: array<string>, defaults: array<string>, changes: array<object>}`:
+            the JSON Pointers of the `params.overrides`, `params.remove` and `params.defaults` entries of the provider and the
+            deployment that changed this request''s upstream body (final attempt), in application order, and each change as
+            `{source: provider|deployment, action: removed|default|override, pointer, value?, previous?}`. `value` is what
+            the entry set (absent for a removal); `previous` is what the client''s body had there (null when absent), shown
+            only with content logging and never under zero data retention. A value over 1 KiB of JSON is `{omitted: true,
+            bytes}`. Empty lists when no entry changed the body.'
         cache:
           type: object
           description: '`{status, layer: exact|semantic|null, similarity: number|null, key: string|null, write: string|null,
@@ -20571,6 +20575,8 @@ components:
           params_applied:
             overrides: []
             removed: []
+            defaults: []
+            changes: []
           attempts:
             - index: 0
               reason: primary

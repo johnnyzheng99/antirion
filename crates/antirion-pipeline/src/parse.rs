@@ -44,6 +44,9 @@ pub(crate) enum Parsed {
         stream: bool,
         /// The rest of a body larger than the read-ahead.
         rest: Option<crate::upload::Upload>,
+        /// The part still arriving when the read-ahead ended (a large upload's file): its field
+        /// name and file name.
+        open: Option<(Option<String>, Option<String>)>,
     },
 }
 
@@ -118,7 +121,13 @@ impl Parsed {
 pub(crate) fn is_multipart(endpoint: &Endpoint) -> bool {
     matches!(
         endpoint.upstream_path,
-        Some("/audio/transcriptions" | "/audio/translations" | "/images/edits" | "/images/variations")
+        Some(
+            "/audio/transcriptions"
+                | "/audio/transcriptions/details"
+                | "/audio/translations"
+                | "/images/edits"
+                | "/images/variations"
+        )
     )
 }
 
@@ -381,7 +390,8 @@ fn parse_multipart(
     }
     let form = scanner.form();
     let present = |name: &str| form.parts().iter().any(|p| p.name.as_deref() == Some(name));
-    let open = scanner.open_part().and_then(|p| p.name);
+    let open_part = scanner.open_part().map(|p| (p.name, p.filename));
+    let open = open_part.as_ref().and_then(|(name, _)| name.clone());
     let file_seen = files.iter().any(|f| present(f) || open.as_deref() == Some(*f));
     let missing = if file_seen {
         others.iter().find(|n| !present(n)).copied()
@@ -411,6 +421,7 @@ fn parse_multipart(
         model,
         stream,
         rest,
+        open: open_part,
     })
 }
 

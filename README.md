@@ -454,7 +454,9 @@ flowchart TB
 ```
 
 - **The data plane** serves the model APIs (`/v1/chat/completions`, `/v1/responses`,
-  `/v1/messages`, `/v1/embeddings`, Gemini and Bedrock paths, Files, Batches, Realtime, MCP and A2A).
+  `/v1/messages`, `/v1/embeddings`, OpenAI Decisions, TypeSafe System One, audio.cpp tasks, Gemini
+  and Bedrock paths, Files, Batches, Realtime, MCP and A2A), and any path an operator adds as a
+  custom endpoint.
   Each request is authenticated, admitted against its limits and budgets, checked by the input
   guardrails, looked up in the cache, routed, sent with retries and checked again on the way out.
   Its record (route, attempts, tokens, cost, verdicts) is written once it settles.

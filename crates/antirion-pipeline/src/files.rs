@@ -330,6 +330,7 @@ async fn upload(
         model: antirion_dialects::ModelField::Missing,
         stream: false,
         rest: head.rest,
+        open: None,
     };
     cx.log.stage(Stage::Admit);
     let candidates = [&carrier];

@@ -18,6 +18,7 @@ import { settingsApi } from '../api';
 import { DURATION_RE } from '../form-errors';
 import { useGatewaySettings } from '../store';
 import { Group, SettingsForm, SIZE_RE, useSettingsForm } from './gateway-forms';
+import { type CustomEndpoint, CustomEndpointsCard } from './custom-endpoints-card';
 import { Card, Facts } from './parts';
 
 export interface EndpointRow {
@@ -44,8 +45,13 @@ export const ENDPOINT_GROUPS: { title: string; rows: EndpointRow[] }[] = [
       { id: 'completions', label: 'Completions (legacy)', paths: 'POST /v1/completions' },
       { id: 'embeddings', label: 'Embeddings', paths: 'POST /v1/embeddings' },
       { id: 'images', label: 'Images', paths: '/v1/images/*' },
-      { id: 'audio', label: 'Audio', paths: '/v1/audio/*' },
+      {
+        id: 'audio',
+        label: 'Audio',
+        paths: '/v1/audio/speech, /transcriptions, /transcriptions/details, /translations',
+      },
       { id: 'moderations', label: 'Moderations', paths: 'POST /v1/moderations' },
+      { id: 'decisions', label: 'Decisions', paths: 'POST /v1/decisions' },
       { id: 'files', label: 'Files', paths: '/v1/files' },
       { id: 'batches', label: 'Batches', paths: '/v1/batches' },
       { id: 'realtime', label: 'Realtime', paths: '/v1/realtime' },
@@ -68,6 +74,20 @@ export const ENDPOINT_GROUPS: { title: string; rows: EndpointRow[] }[] = [
     rows: [{ id: 'bedrock', label: 'Bedrock runtime', paths: '/model/{model}/converse, /invoke' }],
   },
   {
+    title: 'TypeSafe',
+    rows: [{ id: 'systemone', label: 'System One', paths: 'POST /v1/systemone' }],
+  },
+  {
+    title: 'audio.cpp',
+    rows: [
+      {
+        id: 'audio_tasks',
+        label: 'Music and audio tasks',
+        paths: 'POST /v1/tasks/run, /stream, /batch',
+      },
+    ],
+  },
+  {
     title: 'Other',
     rows: [{ id: 'rerank', label: 'Rerank', paths: 'POST /v1/rerank, /v2/rerank' }],
   },
@@ -86,6 +106,7 @@ type ApiSpec = {
   media_fetch?: { enabled?: boolean; max_total_bytes?: string; max_objects?: number };
   images?: { max_n?: number };
   passthrough?: Record<string, unknown>;
+  custom_endpoints?: Record<string, CustomEndpoint>;
 };
 
 /** Whether an endpoint is on: every endpoint is on unless the configuration turns it off. */
@@ -591,6 +612,7 @@ export function ApiEndpointsSection() {
       {api.data ? (
         <>
           <EndpointsCard spec={spec} />
+          <CustomEndpointsCard endpoints={spec.custom_endpoints ?? {}} />
           <Card title="Requests and responses" description="How the gateway reads requests and answers them.">
             <BehaviourForm key={api.data.metadata.etag} initial={behaviourValues(spec)} />
           </Card>

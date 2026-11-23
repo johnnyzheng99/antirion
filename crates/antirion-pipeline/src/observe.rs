@@ -78,10 +78,7 @@ fn attr(v: &Value) -> Option<Attr> {
 /// The request facts read from the body: the session value (after the header), the `gen_ai.request.*`
 /// parameters and, when content logging applies, the body itself.
 pub(crate) fn request(cx: &Ctx, headers: &HeaderMap, parsed: &Parsed) {
-    let (raw, body) = match parsed {
-        Parsed::Json { raw, .. } => (Some(raw), parsed.doc()),
-        Parsed::Multipart { .. } => (None, None),
-    };
+    let body = parsed.doc();
     let mut params: Vec<(&'static str, Attr)> = Vec::new();
     if let Some(b) = &body {
         for (field, name) in PARAMS {
@@ -109,8 +106,17 @@ pub(crate) fn request(cx: &Ctx, headers: &HeaderMap, parsed: &Parsed) {
             r.session_id = later;
         }
     });
-    if let Some(raw) = raw {
-        cx.log.request_content(raw, body);
+    match parsed {
+        Parsed::Json { raw, .. } => cx.log.request_content(raw, body),
+        Parsed::Multipart {
+            raw,
+            form,
+            rest,
+            open,
+            ..
+        } => cx
+            .log
+            .form_content(raw, form, rest.is_some(), open.as_ref(), headers),
     }
 }
 

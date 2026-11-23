@@ -240,7 +240,11 @@ export async function addModel(input: {
     price?: { input: string; output: string; cache_read?: string };
   } | null;
   existingDeployment: string | null;
+  /** A shared route the Model follows instead of a deployment of its own. */
+  route?: string;
 }): Promise<ModelResource> {
+  if (input.route)
+    return useModels.getState().create({ name: input.name, spec: { ...input.spec, route: input.route } });
   let created: string | null = null;
   if (input.deployment) {
     const dep = await modelsApi.createDeployment(input.deployment.name, {

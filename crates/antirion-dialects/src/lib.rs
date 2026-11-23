@@ -18,8 +18,8 @@ pub mod validate;
 pub mod xlate;
 
 pub use endpoints::{
-    Dialect, Endpoint, Kind, Matched, envelope_for_path, legacy_path, match_endpoint, normalise, passthrough,
-    responses_socket,
+    Dialect, Endpoint, Kind, Matched, custom, envelope_for_path, legacy_path, match_endpoint, normalise,
+    passthrough, responses_socket,
 };
 pub use facts::{BodyFacts, ModelField, body_facts};
 pub use validate::{ValidateOpts, Violation, ViolationKind, openai_code, validate_json};

@@ -142,6 +142,7 @@ impl Runtime {
         egress.extend(crate::jwt::check_transport(&candidate, self.test.is_some()));
         egress.extend(crate::budgets::config::check_document(&candidate));
         egress.extend(crate::alerting::config::check_document(&candidate));
+        egress.extend(crate::custom_endpoints::check_document(&candidate));
         if !egress.is_empty() {
             return Err(egress);
         }

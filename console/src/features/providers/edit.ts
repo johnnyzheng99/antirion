@@ -39,6 +39,8 @@ export interface SettingsDraft {
   gcpProject: string;
   gcpLocation: string;
   geminiApiVersion: '' | 'v1beta' | 'v1';
+  /** `capabilities.unrestricted`: every endpoint and feature, with no capability check. */
+  unrestricted: boolean;
 }
 
 export interface ProviderDraft {
@@ -100,6 +102,12 @@ function keysOf(spec: ProviderSpec): { keys: KeyDraft[] | null; single: boolean 
   return { single: false, keys: null };
 }
 
+/** Whether a spec turns on `capabilities.unrestricted`. */
+export function unrestrictedOf(spec: ProviderSpec): boolean {
+  const caps = (spec as { capabilities?: unknown }).capabilities;
+  return typeof caps === 'object' && caps !== null && (caps as Record<string, unknown>).unrestricted === true;
+}
+
 export function fromProvider(p: ProviderResource): ProviderDraft {
   const s = p.spec;
   return {
@@ -119,6 +127,7 @@ export function fromProvider(p: ProviderResource): ProviderDraft {
       gcpProject: s.gcp?.project ?? '',
       gcpLocation: s.gcp?.location ?? '',
       geminiApiVersion: s.gemini?.api_version ?? '',
+      unrestricted: unrestrictedOf(s),
     },
   };
 }
@@ -218,6 +227,8 @@ export function toPatch(p: ProviderResource, draft: ProviderDraft): Record<strin
     }));
     patch.auth = { ...(draft.single ? { api_key: null } : {}), api_keys: list };
   }
+  if (draft.settings.unrestricted !== unrestrictedOf(p.spec))
+    patch.capabilities = { unrestricted: draft.settings.unrestricted ? true : null };
   return patch;
 }
 

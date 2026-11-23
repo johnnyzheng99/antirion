@@ -538,7 +538,16 @@ export function DeploymentDrawer({
         >
           <div className="grid gap-4 sm:grid-cols-3">
             {CAPABILITY_FLAGS.map((f) => (
-              <Field key={f.name} label={f.label}>
+              <Field
+                key={f.name}
+                label={f.label}
+                className={f.name === 'unrestricted' ? 'sm:col-span-3 sm:max-w-80' : undefined}
+                hint={
+                  f.name === 'unrestricted'
+                    ? 'Yes serves every endpoint and request feature without capability checks; requests reach the model as the app sent them.'
+                    : undefined
+                }
+              >
                 <Select
                   value={values.flags[f.name]}
                   onChange={(v) => set('flags', { ...values.flags, [f.name]: v as TriState })}

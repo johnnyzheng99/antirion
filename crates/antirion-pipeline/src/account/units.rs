@@ -75,7 +75,10 @@ pub(crate) fn of_request(endpoint: &Endpoint, parsed: &Parsed) -> RequestUnits {
                 .map_or(0, |s| s.chars().count() as u64);
             out.fixed.characters_in = chars;
         }
-        (Some("/audio/transcriptions" | "/audio/translations"), Parsed::Multipart { raw, form, .. }) => {
+        (
+            Some("/audio/transcriptions" | "/audio/transcriptions/details" | "/audio/translations"),
+            Parsed::Multipart { raw, form, .. },
+        ) => {
             out.audio_ms = form.field(raw, "file").and_then(wav_duration_ms);
         }
         _ => {}

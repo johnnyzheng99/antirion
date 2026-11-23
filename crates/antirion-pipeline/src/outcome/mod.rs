@@ -440,6 +440,7 @@ pub(crate) async fn handle(a: &Attempt<'_>, up: InboundResponse) -> Result<(Done
         }
         Some(_) if a.aggregate => crate::aggregate::collect(a, up, api).await,
         _ if api == apis::Api::Embeddings => embeddings(a, up).await,
+        _ if api == apis::Api::Generic => generic(a, up).await,
         _ if api == apis::Api::Other && (counts_units(a, &up.headers) || transcript::applies(a)) => {
             counted(a, up).await
         }
@@ -520,13 +521,50 @@ async fn embeddings(a: &Attempt<'_>, up: InboundResponse) -> Result<(Done, Class
     Ok((Done::Response(resp), Class::Success))
 }
 
+/// The answer of an endpoint forwarded as it is. A JSON answer is read whole (within
+/// `max_upstream_response`) for the `usage`, `model` and `id` it reports, so settlement prices the
+/// tokens the upstream counted, and relayed unchanged; any other answer (an event stream, audio) is
+/// relayed as it arrives and settled on the estimate.
+async fn generic(a: &Attempt<'_>, up: InboundResponse) -> Result<(Done, Class), Failure> {
+    if !is_json(crate::attempt::essence(&up.headers).as_deref()) {
+        a.record(Some(up.status.as_u16()), Class::Success, None);
+        return Ok((Done::Response(raw_passthrough(a, up)), Class::Success));
+    }
+    let status = up.status;
+    let InboundResponse { headers, body, .. } = up;
+    let raw = match a.read(body, a.body_cap()).await? {
+        Ok(b) => b,
+        Err(why) => return Err(a.unread(why, status.as_u16())),
+    };
+    a.record(Some(status.as_u16()), Class::Success, None);
+    if let Ok(v) = serde_json::from_slice::<Value>(&raw) {
+        let usage = apis::usage_of(&v);
+        a.cx.log.update(|r| {
+            r.usage = usage;
+            r.usage_raw = v.get("usage").cloned();
+            r.response_model = v.get("model").and_then(Value::as_str).map(str::to_owned);
+            r.response_id = v.get("id").and_then(Value::as_str).map(str::to_owned);
+        });
+    }
+    a.cx.log.response_content(&raw);
+    let content_type = headers
+        .get(CONTENT_TYPE)
+        .cloned()
+        .unwrap_or(HeaderValue::from_static("application/json"));
+    let mut resp = Response::new(full(raw));
+    *resp.status_mut() = status;
+    resp.headers_mut().insert(CONTENT_TYPE, content_type);
+    response_head(a, &mut resp, status.as_u16(), &headers);
+    Ok((Done::Response(resp), Class::Success))
+}
+
 /// A JSON image generation or transcription answer, whose unit counts are read from it.
 fn counts_units(a: &Attempt<'_>, headers: &HeaderMap) -> bool {
     let unit_endpoint = match a.plan.endpoint.dialect {
         antirion_dialects::Dialect::OpenAiImages => true,
         antirion_dialects::Dialect::OpenAiAudio => matches!(
             a.plan.endpoint.upstream_path,
-            Some("/audio/transcriptions" | "/audio/translations")
+            Some("/audio/transcriptions" | "/audio/transcriptions/details" | "/audio/translations")
         ),
         _ => false,
     };
@@ -554,6 +592,10 @@ async fn counted(a: &Attempt<'_>, up: InboundResponse) -> Result<(Done, Class), 
     let json = is_json(crate::attempt::essence(&headers).as_deref());
     let raw = transcript::checked(a, status.as_u16(), raw, json).await?;
     a.record(Some(status.as_u16()), Class::Success, None);
+    if a.plan.endpoint.dialect == antirion_dialects::Dialect::OpenAiAudio {
+        // A transcript is the answer's content; an image answer's base64 payloads are left out.
+        a.cx.log.response_content(&raw);
+    }
     if let Ok(v) = serde_json::from_slice::<Value>(&raw) {
         a.cx.log.update(|r| {
             if let Some((key, n)) = r.images_requested.clone() {
@@ -596,6 +638,7 @@ fn raw_passthrough(a: &Attempt<'_>, up: InboundResponse) -> Response<Body> {
     if let Some(ct) = up.headers.get(CONTENT_TYPE).cloned() {
         resp.headers_mut().insert(CONTENT_TYPE, ct);
     }
+    a.cx.log.response_unread(&up.headers);
     response_head(a, &mut resp, status.as_u16(), &up.headers);
     resp
 }

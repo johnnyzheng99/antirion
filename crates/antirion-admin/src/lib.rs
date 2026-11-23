@@ -290,11 +290,17 @@ pub(crate) fn percent_decode(s: &str) -> String {
 }
 
 /// The path with repeated slashes collapsed; `None` for a dot segment (literal or encoded), a
-/// backslash, an encoded slash or an encoded control character.
+/// backslash, an encoded control character, or an encoded slash outside an Admin API path.
+///
+/// An Admin API path may carry `%2F` inside a segment, since resource names such as a Model's
+/// `openai/gpt-4o` contain `/`: the router splits the path on `/` before it decodes each segment, so
+/// an encoded slash stays part of one name. A segment whose decoded name has a `.` or `..` part is
+/// still refused. Every other path (the console's files, SCIM) refuses `%2F` outright.
 pub(crate) fn clean_path(raw: &str) -> Option<String> {
     let lower = raw.to_ascii_lowercase();
+    let api = lower.starts_with("/admin/v1/") && !scim::is_scim(&lower);
     if raw.contains('\\')
-        || lower.contains("%2f")
+        || (lower.contains("%2f") && !api)
         || lower.contains("%5c")
         || raw.bytes().any(|b| b.is_ascii_control())
     {
@@ -303,7 +309,11 @@ pub(crate) fn clean_path(raw: &str) -> Option<String> {
     let segments: Vec<&str> = raw.split('/').filter(|s| !s.is_empty()).collect();
     let bad = segments.iter().any(|s| {
         let d = s.to_ascii_lowercase().replace("%2e", ".");
-        d == "." || d == ".." || d.contains("%0") || d.contains("%1") || d.contains("%7f")
+        let dotted = d
+            .replace("%2f", "/")
+            .split('/')
+            .any(|part| part == "." || part == "..");
+        dotted || d.contains("%0") || d.contains("%1") || d.contains("%7f")
     });
     if bad {
         return None;
@@ -346,6 +356,35 @@ mod tests {
         assert_eq!(hsts(true, on).unwrap(), "max-age=86400");
         assert!(hsts(false, on).is_none());
         assert!(hsts(true, None).is_none());
+    }
+
+    #[test]
+    fn clean_paths() {
+        let ok = |p: &str| clean_path(p).unwrap_or_else(|| panic!("{p} refused"));
+        assert_eq!(ok("/admin/v1//models"), "/admin/v1/models");
+        assert_eq!(
+            ok("/admin/v1/models/openai%2Fgpt-4o"),
+            "/admin/v1/models/openai%2Fgpt-4o"
+        );
+        assert_eq!(
+            ok("/admin/v1/models/a%2fb%2Fc:enable"),
+            "/admin/v1/models/a%2fb%2Fc:enable"
+        );
+        for bad in [
+            "/ui/a%2Fb",
+            "/ui/..%2Fadmin",
+            "/scim/v2/Users/a%2Fb",
+            "/admin/v1/models/..%2Fsettings",
+            "/admin/v1/models/a%2F..",
+            "/admin/v1/models/a%2F.%2Fb",
+            "/admin/v1/models/%2e%2e",
+            "/admin/v1/../x",
+            "/admin/v1/models/a%5Cb",
+            "/admin/v1/models/a%0Ab",
+            "/admin/v1/models/a\\b",
+        ] {
+            assert_eq!(clean_path(bad), None, "{bad}");
+        }
     }
 
     #[test]

@@ -237,6 +237,15 @@ function schemaEndpointIds(): string[] {
   return Object.keys(schema.$defs.Api.properties.endpoints.properties).sort();
 }
 
+function present<T>(value: T | null | undefined): T {
+  if (value == null) throw new Error('expected a value');
+  return value;
+}
+
+async function customCard(): Promise<HTMLElement> {
+  return present((await screen.findByRole('heading', { name: 'Custom endpoints' })).closest('section'));
+}
+
 describe('API & endpoints', () => {
   beforeEach(() => {
     signInAs(['config:read', 'config:apply']);
@@ -250,9 +259,15 @@ describe('API & endpoints', () => {
       http.get('*/admin/v1/settings/api', () => settings(stored)),
       http.get('*/admin/v1/settings/streaming', empty),
       http.patch('*/admin/v1/settings/api', async ({ request }) => {
-        const body = (await request.json()) as { spec: { endpoints?: Record<string, unknown> } };
+        const body = (await request.json()) as {
+          spec: { endpoints?: Record<string, unknown>; custom_endpoints?: Record<string, unknown> };
+        };
         patches.push(body);
-        stored = { ...stored, endpoints: { ...(stored.endpoints as object), ...body.spec.endpoints } };
+        stored = {
+          ...stored,
+          endpoints: { ...(stored.endpoints as object), ...body.spec.endpoints },
+          custom_endpoints: { ...(stored.custom_endpoints as object), ...body.spec.custom_endpoints },
+        };
         return settings(stored);
       }),
     );
@@ -272,7 +287,7 @@ describe('API & endpoints', () => {
       'aria-checked',
       'false',
     );
-    expect(screen.getByText(/1 of 17 turned off/)).toBeInTheDocument();
+    expect(screen.getByText(/1 of 20 turned off/)).toBeInTheDocument();
     // The built-in values, not blanks.
     expect(screen.getByLabelText('Kept for', { selector: 'input[value="30d"]' })).toBeInTheDocument();
   });
@@ -309,6 +324,62 @@ describe('API & endpoints', () => {
     const socket = await screen.findByRole('switch', { name: 'Responses over WebSocket endpoint' });
     expect(socket).toBeDisabled();
     expect(socket).toHaveAttribute('aria-checked', 'false');
+  });
+
+  it('adds a custom endpoint with one patch, leaving the defaults unset', async () => {
+    const patches = serve({});
+    render(<ApiEndpointsSection />);
+    const card = await customCard();
+    expect(card).toHaveTextContent('No custom endpoints');
+    await userEvent.click(within(card).getByRole('button', { name: 'Add endpoint' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Add endpoint' });
+    await userEvent.type(within(dialog).getByLabelText(/^Name/), 'music');
+    await userEvent.type(within(dialog).getByLabelText(/^Path/), '/v1/music/generate');
+    expect(dialog).toHaveTextContent('Empty sends /music/generate');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Add endpoint' }));
+    await waitFor(() =>
+      expect(patches).toEqual([
+        {
+          spec: {
+            custom_endpoints: {
+              music: { path: '/v1/music/generate', upstream_path: null, methods: null, description: null },
+            },
+          },
+        },
+      ]),
+    );
+  });
+
+  it('refuses a custom path the gateway keeps, before saving', async () => {
+    const patches = serve({});
+    render(<ApiEndpointsSection />);
+    const card = await customCard();
+    await userEvent.click(within(card).getByRole('button', { name: 'Add endpoint' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Add endpoint' });
+    await userEvent.type(within(dialog).getByLabelText(/^Name/), 'tools');
+    await userEvent.type(within(dialog).getByLabelText(/^Path/), '/mcp/tools');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Add endpoint' }));
+    expect(await within(dialog).findByText('Paths under /mcp are kept by the gateway')).toBeInTheDocument();
+    expect(patches).toEqual([]);
+  });
+
+  it('lists custom endpoints with the provider path each one reaches', async () => {
+    serve({
+      custom_endpoints: {
+        music: { path: '/v1/music/generate' },
+        voice: { path: '/voice', upstream_path: '/speak', methods: ['PUT'], enabled: false },
+      },
+    });
+    render(<ApiEndpointsSection />);
+    const table = await screen.findByRole('table', { name: 'Custom endpoints' });
+    const rows = within(table).getAllByRole('row').slice(1);
+    expect(rows[0]).toHaveTextContent('POST /v1/music/generate');
+    expect(rows[0]).toHaveTextContent('/music/generatedefault');
+    expect(rows[1]).toHaveTextContent('PUT /voice');
+    expect(within(present(rows[1])).getByRole('switch', { name: 'voice endpoint' })).toHaveAttribute(
+      'aria-checked',
+      'false',
+    );
   });
 });
 

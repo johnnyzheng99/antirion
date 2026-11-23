@@ -48,6 +48,7 @@ mod compare;
 mod completions;
 mod controls;
 mod ctx;
+mod custom;
 mod decide;
 mod decision;
 mod downgrade;

@@ -69,6 +69,26 @@ pub const FLAGS: &[&str] = &[
     "audio_formats",
     "count_tokens_native",
     "responses_native",
+    "unrestricted",
+];
+
+/// Every operation class, in table order.
+pub const OPERATIONS: &[&str] = &[
+    "generate",
+    "embed",
+    "image_generate",
+    "transcribe",
+    "speech",
+    "moderate",
+    "rerank",
+    "count_tokens",
+    "files",
+    "batches",
+    "realtime",
+    "systemone",
+    "decide",
+    "audio_task",
+    "custom",
 ];
 
 /// Where a resolved flag came from.
@@ -188,24 +208,13 @@ impl Capabilities {
                     .unwrap_or_else(|| kind.catalog().dialects.to_vec()),
             ),
             "operations" => Value::from(
-                [
-                    "generate",
-                    "embed",
-                    "image_generate",
-                    "transcribe",
-                    "speech",
-                    "moderate",
-                    "rerank",
-                    "count_tokens",
-                    "files",
-                    "batches",
-                    "realtime",
-                ]
-                .iter()
-                .filter(|c| default_operation(kind, c))
-                .copied()
-                .collect::<Vec<_>>(),
+                OPERATIONS
+                    .iter()
+                    .filter(|c| default_operation(kind, c))
+                    .copied()
+                    .collect::<Vec<_>>(),
             ),
+            "unrestricted" => Value::Bool(false),
             "n_multiple" | "logprobs" | "json_mode" => Value::Bool(!self.anthropic_like()),
             "context_window"
             | "max_input_tokens"
@@ -289,9 +298,24 @@ impl Capabilities {
         }
     }
 
+    /// Whether the deployment is unrestricted (`capabilities.unrestricted: true` on it or its
+    /// provider): it serves every operation and every request feature, so no capability check
+    /// excludes it and requests reach it as the client sent them.
+    #[must_use]
+    pub fn unrestricted(&self) -> bool {
+        self.deployment
+            .get("unrestricted")
+            .or_else(|| self.provider.get("unrestricted"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    }
+
     /// Whether the deployment serves an operation class.
     #[must_use]
     pub fn operation(&self, class: &str) -> bool {
+        if self.unrestricted() {
+            return true;
+        }
         for layer in [&self.deployment, &self.provider, &self.catalog] {
             if let Some(list) = layer.get("operations").and_then(Value::as_array) {
                 return list.iter().any(|o| o.as_str() == Some(class));
@@ -303,9 +327,12 @@ impl Capabilities {
 
 fn default_operation(kind: ProviderType, class: &str) -> bool {
     match kind {
-        ProviderType::OpenAi | ProviderType::AzureOpenAi => true,
-        ProviderType::OpenAiCompatible | ProviderType::Mistral => matches!(class, "generate" | "embed"),
-        ProviderType::Preset(p) => class == "generate" || (class == "embed" && p.embeds()),
+        ProviderType::OpenAi | ProviderType::AzureOpenAi => !matches!(class, "systemone" | "audio_task"),
+        // Every endpoint operation; token counting stays off, so a count without a native API is
+        // still answered from the local estimate rather than sent to a server that rarely has one.
+        ProviderType::OpenAiCompatible => class != "count_tokens",
+        ProviderType::Mistral => matches!(class, "generate" | "embed" | "custom"),
+        ProviderType::Preset(p) => matches!(class, "generate" | "custom") || (class == "embed" && p.embeds()),
         ProviderType::Anthropic => matches!(class, "generate" | "count_tokens" | "files" | "batches"),
         ProviderType::AnthropicCompatible => matches!(class, "generate" | "count_tokens"),
         ProviderType::Cohere => matches!(class, "generate" | "embed" | "rerank"),

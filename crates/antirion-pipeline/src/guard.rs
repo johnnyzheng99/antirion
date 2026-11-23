@@ -232,7 +232,7 @@ pub(crate) fn dialect_of(endpoint: &Endpoint) -> Option<Dialect> {
         "audio"
             if matches!(
                 endpoint.upstream_path,
-                Some("/audio/transcriptions" | "/audio/translations")
+                Some("/audio/transcriptions" | "/audio/transcriptions/details" | "/audio/translations")
             ) =>
         {
             Dialect::Transcription

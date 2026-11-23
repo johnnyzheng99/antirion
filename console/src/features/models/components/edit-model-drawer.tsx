@@ -184,16 +184,8 @@ export function EditModelDrawer({
         {focus !== 'lifecycle' ? (
           <fieldset className="flex flex-col gap-3">
             <legend className="mb-2 text-ui font-medium text-fg">Serves from</legend>
-            <Segmented<'own' | 'route'>
-              label="Serves from"
-              value={values.serves}
-              onChange={(v) => set('serves', v)}
-              options={[
-                { value: 'own', label: 'Its own deployments' },
-                // No count when there are none: "A shared route 0" reads as a route named 0.
-                { value: 'route', label: 'A shared route', count: routes.size || undefined },
-              ]}
-            />
+            {/* What it serves from stays as it is here: a Model on a shared route is added with Add
+                route (Routing tab), and its route can be changed below. */}
             {values.serves === 'route' ? (
               <Field
                 label="Shared route"

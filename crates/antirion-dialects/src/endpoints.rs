@@ -17,6 +17,10 @@ pub enum Dialect {
     OpenAiFiles,
     OpenAiBatches,
     OpenAiRealtime,
+    /// A JSON call that names its `model` and is forwarded as it is to the same operation path on an
+    /// OpenAI-family deployment: TypeSafe System One, OpenAI Decisions, audio.cpp tasks and the
+    /// operator's custom endpoints.
+    OpenAiGeneric,
     /// Cohere-style rerank.
     Rerank,
     AnthropicMessages,
@@ -74,6 +78,8 @@ pub struct Endpoint {
     /// A model or object id carried in the path (for OpenAI inference endpoints, the model of a
     /// legacy Azure or engine path).
     pub path_param: Option<String>,
+    /// A custom endpoint's operation path, appended like `upstream_path` (which it stands in for).
+    pub custom_path: Option<String>,
     /// The action of a native path (`streamGenerateContent`, `converse-stream`, …), or of a
     /// Responses operation on the collection (`input_tokens`, `compact`).
     pub action: Option<&'static str>,
@@ -94,6 +100,13 @@ impl Endpoint {
             self.action,
             Some("streamGenerateContent" | "converse-stream" | "invoke-with-response-stream")
         )
+    }
+
+    /// The operation path appended to an OpenAI-family provider's base URL: the catalog's, or a
+    /// custom endpoint's.
+    #[must_use]
+    pub fn upstream(&self) -> Option<&str> {
+        self.upstream_path.or(self.custom_path.as_deref())
     }
 }
 
@@ -130,6 +143,7 @@ fn inference(
         kind: Kind::Inference,
         upstream_path: upstream,
         path_param: None,
+        custom_path: None,
         action: None,
     }
 }
@@ -266,6 +280,23 @@ pub fn passthrough(name: &str) -> Endpoint {
         kind: Kind::Passthrough,
         upstream_path: None,
         path_param: Some(name.to_owned()),
+        custom_path: None,
+        action: None,
+    }
+}
+
+/// The endpoint of the custom endpoint `name` (`api.custom_endpoints`): a model call whose JSON body
+/// is forwarded as it is to `upstream`, relative to the deployment's base URL.
+#[must_use]
+pub fn custom(name: &str, upstream: &str) -> Endpoint {
+    Endpoint {
+        id: "custom",
+        family: "custom",
+        dialect: Dialect::OpenAiGeneric,
+        kind: Kind::Inference,
+        upstream_path: None,
+        path_param: Some(name.to_owned()),
+        custom_path: Some(upstream.to_owned()),
         action: None,
     }
 }
@@ -306,6 +337,7 @@ pub fn responses_socket() -> Endpoint {
         kind: Kind::ResponsesSocket,
         upstream_path: None,
         path_param: None,
+        custom_path: None,
         action: None,
     }
 }
@@ -368,6 +400,7 @@ pub fn match_endpoint(method: &Method, raw_path: &str) -> Matched {
                 kind: Kind::StoredResponse,
                 upstream_path: None,
                 path_param: Some((*id).to_owned()),
+                custom_path: None,
                 action: None,
             }),
         ),
@@ -398,6 +431,49 @@ pub fn match_endpoint(method: &Method, raw_path: &str) -> Matched {
             (
                 POST,
                 Some(inference("audio", "audio", Dialect::OpenAiAudio, Some(upstream))),
+            )
+        }
+        ["v1", "audio", "transcriptions", "details"] => (
+            POST,
+            Some(inference(
+                "audio",
+                "audio",
+                Dialect::OpenAiAudio,
+                Some("/audio/transcriptions/details"),
+            )),
+        ),
+        ["v1", "systemone"] => (
+            POST,
+            Some(inference(
+                "systemone",
+                "systemone",
+                Dialect::OpenAiGeneric,
+                Some("/systemone"),
+            )),
+        ),
+        ["v1", "decisions"] => (
+            POST,
+            Some(inference(
+                "decisions",
+                "decisions",
+                Dialect::OpenAiGeneric,
+                Some("/decisions"),
+            )),
+        ),
+        ["v1", "tasks", op @ ("run" | "stream" | "batch")] => {
+            let upstream = match *op {
+                "run" => "/tasks/run",
+                "stream" => "/tasks/stream",
+                _ => "/tasks/batch",
+            };
+            (
+                POST,
+                Some(inference(
+                    "audio_tasks",
+                    "audio_tasks",
+                    Dialect::OpenAiGeneric,
+                    Some(upstream),
+                )),
             )
         }
         ["v1", "messages"] => (
@@ -472,6 +548,7 @@ pub fn match_endpoint(method: &Method, raw_path: &str) -> Matched {
                 kind: Kind::Limits,
                 upstream_path: None,
                 path_param: None,
+                custom_path: None,
                 action: None,
             }),
         ),
@@ -484,6 +561,7 @@ pub fn match_endpoint(method: &Method, raw_path: &str) -> Matched {
                 kind: Kind::Feedback,
                 upstream_path: None,
                 path_param: None,
+                custom_path: None,
                 action: None,
             }),
         ),
@@ -503,6 +581,7 @@ pub fn match_endpoint(method: &Method, raw_path: &str) -> Matched {
                     "/mcp{}",
                     rest.iter().map(|r| format!("/{r}")).collect::<String>()
                 )),
+                custom_path: None,
                 action: None,
             }),
         ),
@@ -515,6 +594,7 @@ pub fn match_endpoint(method: &Method, raw_path: &str) -> Matched {
                 kind: Kind::McpMetadata,
                 upstream_path: None,
                 path_param: Some(rest.iter().map(|r| format!("/{r}")).collect::<String>()),
+                custom_path: None,
                 action: None,
             }),
         ),
@@ -527,6 +607,7 @@ pub fn match_endpoint(method: &Method, raw_path: &str) -> Matched {
                 kind: Kind::McpMetadata,
                 upstream_path: None,
                 path_param: Some((*gateway).to_owned()),
+                custom_path: None,
                 action: None,
             }),
         ),
@@ -539,6 +620,7 @@ pub fn match_endpoint(method: &Method, raw_path: &str) -> Matched {
                 kind: Kind::Mcp,
                 upstream_path: None,
                 path_param: Some((*gateway).to_owned()),
+                custom_path: None,
                 action: None,
             }),
         ),
@@ -551,6 +633,7 @@ pub fn match_endpoint(method: &Method, raw_path: &str) -> Matched {
                 kind: Kind::Mcp,
                 upstream_path: None,
                 path_param: segs.get(1).map(|s| (*s).to_owned()),
+                custom_path: None,
                 action: None,
             }),
         ),
@@ -586,6 +669,7 @@ pub fn match_endpoint(method: &Method, raw_path: &str) -> Matched {
                 kind: Kind::Realtime,
                 upstream_path: Some("/realtime"),
                 path_param: None,
+                custom_path: None,
                 action: None,
             }),
         ),
@@ -640,6 +724,7 @@ fn resource(kind: Kind, id: Option<&&str>, action: Option<&'static str>) -> Endp
         kind,
         upstream_path: Some(upstream),
         path_param: id.map(|s| (*s).to_owned()),
+        custom_path: None,
         action,
     }
 }
@@ -652,6 +737,7 @@ fn a2a(id: &'static str, agent: &str) -> Endpoint {
         kind: Kind::A2a,
         upstream_path: None,
         path_param: Some(agent.to_owned()),
+        custom_path: None,
         action: None,
     }
 }
@@ -664,6 +750,7 @@ fn models_endpoint(id: Option<&str>) -> Endpoint {
         kind: Kind::ModelsList,
         upstream_path: None,
         path_param: id.map(str::to_owned),
+        custom_path: None,
         action: None,
     }
 }
@@ -861,6 +948,38 @@ mod tests {
             Some("/images/variations")
         );
         assert_eq!(found(Method::GET, "/v1/realtime").kind, Kind::Realtime);
+        let details = found(Method::POST, "/v1/audio/transcriptions/details");
+        assert_eq!(
+            (details.id, details.upstream()),
+            ("audio", Some("/audio/transcriptions/details"))
+        );
+        for (path, id, upstream) in [
+            ("/v1/systemone", "systemone", "/systemone"),
+            ("/v1/decisions", "decisions", "/decisions"),
+            ("/v1/tasks/run", "audio_tasks", "/tasks/run"),
+            ("/v1/tasks/stream", "audio_tasks", "/tasks/stream"),
+            ("/v1/tasks/batch", "audio_tasks", "/tasks/batch"),
+        ] {
+            let e = found(Method::POST, path);
+            assert_eq!(
+                (e.id, e.dialect, e.kind, e.upstream()),
+                (id, Dialect::OpenAiGeneric, Kind::Inference, Some(upstream)),
+                "{path}"
+            );
+        }
+        assert_eq!(
+            match_endpoint(&Method::GET, "/v1/decisions"),
+            Matched::MethodNotAllowed(POST)
+        );
+        assert_eq!(
+            match_endpoint(&Method::POST, "/v1/tasks/other"),
+            Matched::NotFound
+        );
+        let c = custom("music", "/music/generate");
+        assert_eq!(
+            (c.id, c.kind, c.upstream(), c.path_param.as_deref()),
+            ("custom", Kind::Inference, Some("/music/generate"), Some("music"))
+        );
         assert_eq!(
             match_endpoint(&Method::POST, "/v1/files/a/b/c"),
             Matched::NotSupported

@@ -915,6 +915,71 @@ impl Draft {
         });
     }
 
+    /// Records a multipart request (a transcription, a translation, an image edit) as content, when
+    /// content logging applies: its text fields by name (a repeated name as a list, each value cut to
+    /// 4 KiB) and its files by field, file name and size, never their bytes. `streamed` says the body
+    /// went on past the read-ahead, so `open` (the part still arriving) has no size and the body's
+    /// size is the declared `Content-Length`, if any.
+    pub(crate) fn form_content(
+        &self,
+        raw: &[u8],
+        form: &antirion_wire::multipart::Form,
+        streamed: bool,
+        open: Option<&(Option<String>, Option<String>)>,
+        headers: &http::HeaderMap,
+    ) {
+        self.update(|r| {
+            if !r.content.enabled {
+                return;
+            }
+            let summary = form_summary(raw, form, open);
+            let declared = headers
+                .get(http::header::CONTENT_LENGTH)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.trim().parse::<u64>().ok());
+            let original = if streamed {
+                declared
+            } else {
+                Some(raw.len() as u64)
+            };
+            r.content.input_messages = summary
+                .pointer("/fields/prompt")
+                .and_then(Value::as_str)
+                .map(|p| bounded_text(p, r.snap.obs.request_logs.max_body_bytes));
+            r.content.request = Some(serde_json::json!({
+                "body": summary,
+                "truncated": false,
+                "original_bytes": original,
+            }));
+        });
+    }
+
+    /// Records a response the gateway relays without reading (audio, an event stream it does not
+    /// parse) as content, when content logging applies: its content type and declared size, never
+    /// its bytes.
+    pub(crate) fn response_unread(&self, headers: &http::HeaderMap) {
+        self.update(|r| {
+            if !r.content.enabled {
+                return;
+            }
+            let text = |name| {
+                headers
+                    .get(name)
+                    .and_then(|v: &http::HeaderValue| v.to_str().ok())
+            };
+            let bytes = text(http::header::CONTENT_LENGTH).and_then(|v| v.trim().parse::<u64>().ok());
+            r.content.response = Some(serde_json::json!({
+                "body": {
+                    "content_type": text(http::header::CONTENT_TYPE),
+                    "bytes": bytes,
+                    "omitted": true,
+                },
+                "truncated": false,
+                "original_bytes": bytes,
+            }));
+        });
+    }
+
     /// Records the response body the client received as content, when content logging applies. An
     /// embeddings answer is recorded as its summary (`crate::embedded`): the vectors are left out.
     pub(crate) fn response_content(&self, bytes: &[u8]) {
@@ -958,6 +1023,50 @@ impl Draft {
             r.content.response = Some(antirion_obs::record::body(&bytes, Some(v), max));
         });
     }
+}
+
+/// A form value of at most this many bytes is logged whole.
+const MAX_FORM_VALUE: usize = 4096;
+
+/// What a multipart form says, without file bytes: `{fields: {name: value | [values]}, files:
+/// [{field, filename, bytes}]}`. A part with a file name is a file; its `bytes` is null while it was
+/// still arriving at the end of the read-ahead.
+fn form_summary(
+    raw: &[u8],
+    form: &antirion_wire::multipart::Form,
+    open: Option<&(Option<String>, Option<String>)>,
+) -> Value {
+    let mut fields = serde_json::Map::new();
+    let mut files = Vec::new();
+    for p in form.parts() {
+        let field = p.name.clone().unwrap_or_default();
+        if p.filename.is_some() {
+            files.push(serde_json::json!({
+                "field": field,
+                "filename": p.filename,
+                "bytes": p.value.len(),
+            }));
+            continue;
+        }
+        let value = raw.get(p.value.clone()).unwrap_or_default();
+        let text = String::from_utf8_lossy(value.get(..MAX_FORM_VALUE.min(value.len())).unwrap_or_default());
+        let text = Value::String(text.trim_end_matches('\u{FFFD}').to_owned());
+        match fields.get_mut(&field) {
+            Some(Value::Array(list)) => list.push(text),
+            Some(first) => *first = Value::Array(vec![first.take(), text]),
+            None => {
+                fields.insert(field, text);
+            }
+        }
+    }
+    if let Some((name, filename)) = open {
+        files.push(serde_json::json!({
+            "field": name.clone().unwrap_or_default(),
+            "filename": filename,
+            "bytes": null,
+        }));
+    }
+    serde_json::json!({"fields": fields, "files": files})
 }
 
 #[cfg(test)]

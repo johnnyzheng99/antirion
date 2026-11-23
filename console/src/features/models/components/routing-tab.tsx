@@ -5,8 +5,9 @@ import { useEffect, useState } from 'react';
 
 import { useScopedHref } from '@/components/layout/url-sync';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Meter } from '@/components/ui/charts';
-import { useCan } from '@/components/ui/gate';
+import { Gate, useCan } from '@/components/ui/gate';
 import { Section } from '@/components/ui/layout';
 import { EmptyState } from '@/components/ui/states';
 import { Table, Td, Th, Tr } from '@/components/ui/table';
@@ -22,6 +23,19 @@ import { conditionalRoot, describeNode, stepsOf } from '../tree';
 import type { ModelView } from '../types';
 
 const HOUR = 3_600_000;
+
+/** The anchor of a Model's rule list on this tab. */
+const listId = (model: string) => `routing-rules-${model.replace(/[^A-Za-z0-9_-]/g, '-')}`;
+
+/** Brings a Model's rule list into view and focus, marked for a moment. */
+function showList(model: string) {
+  const el = document.getElementById(listId(model));
+  if (!el) return;
+  el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  el.focus({ preventScroll: true });
+  el.dataset.flash = 'true';
+  window.setTimeout(() => delete el.dataset.flash, 1600);
+}
 
 /** Requests per tree position in the last 24 hours (`group_by=route_node`), or null while unknown. */
 function useRouteNodeUsage(enabled: boolean): UsageBucket[] | null | 'error' {
@@ -74,9 +88,12 @@ function chainOf(
 export function RoutingTab({
   views,
   onOpenModel,
+  onAddRoute,
 }: {
   views: ModelView[];
   onOpenModel: (name: string) => void;
+  /** Opens "Add route": a new Model that follows a shared route. */
+  onAddRoute: () => void;
 }) {
   const routes = useRouteMap();
   const routingHref = useScopedHref('/routing/');
@@ -85,6 +102,9 @@ export function RoutingTab({
   const lists = views
     .map((v) => ({ view: v, root: conditionalRoot(v.name, v.model.spec, routes) }))
     .filter((x): x is { view: ModelView; root: NonNullable<typeof x.root> } => x.root !== null);
+  const shared = views
+    .filter((v) => typeof v.model.spec.route === 'string' && v.model.spec.route !== '')
+    .sort((a, b) => a.name.localeCompare(b.name));
   const withChains = views.filter(
     (v) => !conditionalRoot(v.name, v.model.spec, routes) && stepsOf(v.model.spec).length > 1,
   );
@@ -130,104 +150,174 @@ export function RoutingTab({
 
   return (
     <div className="flex flex-col">
-      <p className="border-b border-line bg-raised px-5 py-3 text-ui text-muted max-sm:px-gutter-sm">
-        Rules are tried in order and the first that matches sends the request; each target lists its
-        fallbacks. Edit rules on the{' '}
-        <Link href={routingHref} className="text-accent hover:underline">
-          Routing policy
-        </Link>{' '}
-        screen.
-      </p>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-raised px-5 py-3 max-sm:px-gutter-sm">
+        <p className="min-w-0 flex-[1_1_20rem] text-ui text-muted">
+          Rules are tried in order and the first that matches sends the request; each target lists its
+          fallbacks. Edit rules on the{' '}
+          <Link href={routingHref} className="text-accent hover:underline">
+            Routing policy
+          </Link>{' '}
+          screen.
+        </p>
+        <Gate operation="createModel" mode="hide">
+          <Button size="sm" icon="plus" onClick={onAddRoute}>
+            Add route
+          </Button>
+        </Gate>
+      </div>
       {usage === 'error' ? (
         <p className="border-b border-line px-5 py-2 text-caption text-muted max-sm:px-gutter-sm">
           The share of the last 24 hours couldn’t be read.
         </p>
       ) : null}
-      {lists.length === 0 ? (
+      {shared.length > 0 ? (
+        <Section title="Shared routes" subtitle="models that follow a shared route">
+          <div className="overflow-x-auto">
+            <Table label="Models on shared routes">
+              <thead>
+                <tr>
+                  <Th>Model</Th>
+                  <Th>Shared route</Th>
+                  <Th>Sends to</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {shared.map((v) => {
+                  const route = v.model.spec.route ?? '';
+                  const spec = routes.get(route)?.spec;
+                  const routeHref = `${routingHref}?route=${encodeURIComponent(route)}`;
+                  const hasList = lists.some((l) => l.view.name === v.name);
+                  return (
+                    <Tr key={v.name}>
+                      <Td>
+                        <span className="flex items-center gap-1.5">
+                          {hasList ? (
+                            <button
+                              type="button"
+                              className="mono text-fg hover:text-accent"
+                              onClick={() => showList(v.name)}
+                            >
+                              {v.name}
+                            </button>
+                          ) : (
+                            <Link href={routeHref} className="mono text-fg hover:text-accent">
+                              {v.name}
+                            </Link>
+                          )}
+                          {v.model.spec.enabled === false ? <Badge>Off</Badge> : null}
+                        </span>
+                      </Td>
+                      <Td>
+                        <Link href={routeHref} className="mono text-accent hover:underline">
+                          {route}
+                        </Link>
+                      </Td>
+                      <Td mono muted>
+                        {spec ? describeNode(spec.tree, routes) : 'The route no longer exists'}
+                      </Td>
+                    </Tr>
+                  );
+                })}
+              </tbody>
+            </Table>
+          </div>
+        </Section>
+      ) : null}
+      {lists.length === 0 && shared.length === 0 ? (
         <EmptyState
-          title="No rule lists"
-          description="Point a model at a shared route with rules, or add rules on Routing policy."
+          title="No routes yet"
+          description="Add a route to give apps a model name that follows a shared route, or add rules on Routing policy."
         />
       ) : null}
       {lists.map(({ view, root }) => {
         const { lines, total } = linesOf(root.route, root.tree);
         return (
-          <Section
+          <div
             key={view.name}
-            title={
-              <button type="button" className="mono hover:text-accent" onClick={() => onOpenModel(view.name)}>
-                {view.name}
-              </button>
-            }
-            subtitle={
-              root.shared
-                ? `through the shared route ${root.route} · ${formatCount(total)} requests in 24 h`
-                : `${formatCount(total)} requests in 24 h`
-            }
-            actions={
-              root.shared ? (
-                <Link
-                  href={`${routingHref}?route=${encodeURIComponent(root.route)}`}
-                  className="text-caption text-accent hover:underline"
-                >
-                  Open in Routing policy
-                </Link>
-              ) : null
-            }
+            id={listId(view.name)}
+            tabIndex={-1}
+            className="scroll-mt-4 transition-shadow outline-none data-[flash=true]:shadow-[inset_3px_0_0_var(--color-accent)]"
           >
-            <div className="overflow-x-auto">
-              <Table label={`Rules of ${view.name}`}>
-                <thead>
-                  <tr>
-                    <Th>Rule</Th>
-                    <Th>When</Th>
-                    <Th>Sends to</Th>
-                    <Th>Share, 24 h</Th>
-                    <Th>Note</Th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {lines.map((l) => (
-                    <Tr key={l.key}>
-                      <Td>
-                        <span className="flex items-center gap-1.5">
-                          <span className="mono">{l.name}</span>
-                          {!l.enabled ? <Badge>Off</Badge> : null}
-                        </span>
-                      </Td>
-                      <Td muted>{l.condition}</Td>
-                      <Td>
-                        <span className="mono text-fg">{l.primary}</span>
-                        {l.fallbacks.map((f) => (
-                          <span key={f} className="mono block text-caption text-muted">
-                            ↳ {f}
+            <Section
+              title={
+                <button
+                  type="button"
+                  className="mono hover:text-accent"
+                  onClick={() => onOpenModel(view.name)}
+                >
+                  {view.name}
+                </button>
+              }
+              subtitle={
+                root.shared
+                  ? `through the shared route ${root.route} · ${formatCount(total)} requests in 24 h`
+                  : `${formatCount(total)} requests in 24 h`
+              }
+              actions={
+                root.shared ? (
+                  <Link
+                    href={`${routingHref}?route=${encodeURIComponent(root.route)}`}
+                    className="text-caption text-accent hover:underline"
+                  >
+                    Open in Routing policy
+                  </Link>
+                ) : null
+              }
+            >
+              <div className="overflow-x-auto">
+                <Table label={`Rules of ${view.name}`}>
+                  <thead>
+                    <tr>
+                      <Th>Rule</Th>
+                      <Th>When</Th>
+                      <Th>Sends to</Th>
+                      <Th>Share, 24 h</Th>
+                      <Th>Note</Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lines.map((l) => (
+                      <Tr key={l.key}>
+                        <Td>
+                          <span className="flex items-center gap-1.5">
+                            <span className="mono">{l.name}</span>
+                            {!l.enabled ? <Badge>Off</Badge> : null}
                           </span>
-                        ))}
-                      </Td>
-                      <Td>
-                        {l.requests === null ? (
-                          <span className="text-dim">—</span>
-                        ) : (
-                          <span className="flex min-w-32 items-center gap-2">
-                            <Meter
-                              value={l.requests}
-                              max={Math.max(1, total)}
-                              label={`${l.name}: ${formatCount(l.requests)} requests`}
-                              className="flex-1"
-                            />
-                            <span className="mono w-12 text-right text-caption tabular-nums">
-                              {total > 0 ? formatPercent(l.requests / total, 0) : '0%'}
+                        </Td>
+                        <Td muted>{l.condition}</Td>
+                        <Td>
+                          <span className="mono text-fg">{l.primary}</span>
+                          {l.fallbacks.map((f) => (
+                            <span key={f} className="mono block text-caption text-muted">
+                              ↳ {f}
                             </span>
-                          </span>
-                        )}
-                      </Td>
-                      <Td muted>{l.note || '—'}</Td>
-                    </Tr>
-                  ))}
-                </tbody>
-              </Table>
-            </div>
-          </Section>
+                          ))}
+                        </Td>
+                        <Td>
+                          {l.requests === null ? (
+                            <span className="text-dim">—</span>
+                          ) : (
+                            <span className="flex min-w-32 items-center gap-2">
+                              <Meter
+                                value={l.requests}
+                                max={Math.max(1, total)}
+                                label={`${l.name}: ${formatCount(l.requests)} requests`}
+                                className="flex-1"
+                              />
+                              <span className="mono w-12 text-right text-caption tabular-nums">
+                                {total > 0 ? formatPercent(l.requests / total, 0) : '0%'}
+                              </span>
+                            </span>
+                          )}
+                        </Td>
+                        <Td muted>{l.note || '—'}</Td>
+                      </Tr>
+                    ))}
+                  </tbody>
+                </Table>
+              </div>
+            </Section>
+          </div>
         );
       })}
       {withChains.length > 0 ? (
