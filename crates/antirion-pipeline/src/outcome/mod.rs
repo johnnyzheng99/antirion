@@ -592,6 +592,10 @@ async fn counted(a: &Attempt<'_>, up: InboundResponse) -> Result<(Done, Class), 
     let json = is_json(crate::attempt::essence(&headers).as_deref());
     let raw = transcript::checked(a, status.as_u16(), raw, json).await?;
     a.record(Some(status.as_u16()), Class::Success, None);
+    if a.plan.endpoint.dialect == antirion_dialects::Dialect::OpenAiAudio {
+        // A transcript is the answer's content; an image answer's base64 payloads are left out.
+        a.cx.log.response_content(&raw);
+    }
     if let Ok(v) = serde_json::from_slice::<Value>(&raw) {
         a.cx.log.update(|r| {
             if let Some((key, n)) = r.images_requested.clone() {
@@ -634,6 +638,7 @@ fn raw_passthrough(a: &Attempt<'_>, up: InboundResponse) -> Response<Body> {
     if let Some(ct) = up.headers.get(CONTENT_TYPE).cloned() {
         resp.headers_mut().insert(CONTENT_TYPE, ct);
     }
+    a.cx.log.response_unread(&up.headers);
     response_head(a, &mut resp, status.as_u16(), &up.headers);
     resp
 }

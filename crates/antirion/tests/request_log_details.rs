@@ -1,6 +1,7 @@
 //! What the request log records of how a request was changed and what it sent: each `params`
 //! change of the provider and the deployment, with the value it set and, under content logging, the
-//! value the client sent.
+//! value the client sent; and, under content logging, a transcription's form (fields, file names and
+//! sizes, never the file) with its transcript, and a speech request with its audio answer described.
 
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -59,7 +60,7 @@ async fn upstream(listener: TcpListener, seen: Arc<Mutex<Vec<Value>>>) {
         connections.spawn(async move {
             let mut bytes = Vec::new();
             let mut buf = [0u8; 4096];
-            let body = loop {
+            let (head, body) = loop {
                 let Ok(n) = stream.read(&mut buf).await else {
                     return;
                 };
@@ -76,12 +77,32 @@ async fn upstream(listener: TcpListener, seen: Arc<Mutex<Vec<Value>>>) {
                     .find_map(|l| l.strip_prefix("content-length:").map(|v| v.trim().parse().unwrap()))
                     .unwrap_or(0);
                 if bytes.len() >= at + 4 + len {
-                    break bytes[at + 4..at + 4 + len].to_vec();
+                    break (head, bytes[at + 4..at + 4 + len].to_vec());
                 }
             };
             seen.lock()
                 .unwrap()
                 .push(serde_json::from_slice(&body).unwrap_or(Value::Null));
+            let path = head.split(' ').nth(1).unwrap_or_default().to_owned();
+            if path.ends_with("/audio/speech") {
+                let audio = b"RIFF\x24\0\0\0WAVEfmt ";
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: audio/wav\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    audio.len()
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+                let _ = stream.write_all(audio).await;
+                return;
+            }
+            if path.contains("/audio/transcriptions") {
+                let text = r#"{"text":"hello there"}"#;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{text}",
+                    text.len()
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+                return;
+            }
             let text = json!({"id": "chatcmpl-1", "object": "chat.completion", "created": 1, "model": "up",
                 "choices": [{"index": 0, "message": {"role": "assistant", "content": "hi"}, "finish_reason": "stop"}],
                 "usage": {"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4}})
@@ -252,6 +273,61 @@ async fn without_content_logging_the_client_values_are_left_out() {
     assert_eq!(changes.len(), 4, "{changes:?}");
     assert!(changes.iter().all(|c| c.get("previous").is_none()), "{changes:?}");
     assert_eq!(changes[3]["value"], 0.2, "the configured value is always shown");
+    stop();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    tasks.abort_all();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn speech_and_transcription_requests_are_logged_without_their_audio() {
+    let dir = ScratchDir::new("log-audio");
+    let (gw, _seen, stop, mut tasks) = gateway(&dir, true).await;
+
+    let form = "--b\r\ncontent-disposition: form-data; name=\"model\"\r\n\r\nm\r\n\
+                --b\r\ncontent-disposition: form-data; name=\"language\"\r\n\r\nen\r\n\
+                --b\r\ncontent-disposition: form-data; name=\"timestamp_granularities[]\"\r\n\r\nword\r\n\
+                --b\r\ncontent-disposition: form-data; name=\"timestamp_granularities[]\"\r\n\r\nsegment\r\n\
+                --b\r\ncontent-disposition: form-data; name=\"file\"; filename=\"meeting.wav\"\r\n\
+                content-type: audio/wav\r\n\r\nRIFF-SECRET-AUDIO\r\n--b--\r\n";
+    let record = gw
+        .send(
+            "/v1/audio/transcriptions",
+            "multipart/form-data; boundary=b",
+            form.as_bytes(),
+        )
+        .await;
+    let request = &record["content"]["request"];
+    assert_eq!(
+        request["body"],
+        json!({
+            "fields": {"model": "m", "language": "en", "timestamp_granularities[]": ["word", "segment"]},
+            "files": [{"field": "file", "filename": "meeting.wav", "bytes": 17}]
+        }),
+        "{request}"
+    );
+    assert_eq!(request["original_bytes"], form.len());
+    assert!(
+        !record.to_string().contains("RIFF-SECRET-AUDIO"),
+        "the file's bytes are never logged"
+    );
+    assert_eq!(
+        record["content"]["response"]["body"]["text"], "hello there",
+        "{record}"
+    );
+
+    let speech = r#"{"model":"m","input":"Read this aloud","voice":"alloy"}"#;
+    let record = gw
+        .send("/v1/audio/speech", "application/json", speech.as_bytes())
+        .await;
+    assert_eq!(
+        record["content"]["request"]["body"]["input"], "Read this aloud",
+        "{record}"
+    );
+    assert_eq!(
+        record["content"]["response"]["body"],
+        json!({"content_type": "audio/wav", "bytes": 16, "omitted": true}),
+        "{record}"
+    );
     stop();
     tokio::time::sleep(Duration::from_millis(50)).await;
     tasks.abort_all();

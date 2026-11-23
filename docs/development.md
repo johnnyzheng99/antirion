@@ -414,6 +414,12 @@ crate can use its strict parser.
   record shows the set value always and the client's value only with content logging and without
   zero data retention (`reqlog/json.rs`); a value over 1 KiB of JSON is shown by its size. An override
   that sets the value the body already had is no change.
+- **Uploads and audio in the record** (`reqlog/mod.rs`): with content logging, a multipart request
+  (transcription, translation, image edit) is recorded as `{fields, files}`: each text part by name (a
+  repeated name as a list, values cut to 4 KiB) and each file by field, file name and size (null for
+  a file still arriving after the read-ahead), never its bytes (`form_content`). A transcription's
+  answer is recorded like any JSON answer; a body relayed unread (speech audio, an event stream the
+  gateway does not parse) as its content type and declared size (`response_unread`).
 - **Store** (`antirion-store/src/logs/`): `request_logs` and `log_rollups`, in `logs.db` beside
   `state.db` in standalone mode (normal synchronisation, its own thread). Queries are written once
   for both backends (`sql.rs`): repeated values are `IN`, set columns `LIKE '%␟v␟%'`, sorting is
