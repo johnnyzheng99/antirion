@@ -1629,8 +1629,22 @@ What the Cache screen reads and changes beyond the cache's own rules.
   the configured one in `build_request`, is scrubbed like an obtained credential, and an upstream 401/403
   on it is `caller_error` with reason `byok_credential_refused`.
 - **Edge** (`accept.rs`): passthrough mounts are matched before the catalog (`passthrough.rs`, served with
-  authentication, provider lists, request limits and a record); with `api.azure_paths`, the legacy Azure and
-  engine paths map to their catalog endpoint with the model taken from the path (`legacy_path`).
+  authentication, provider lists, request limits and a record), then custom endpoints (`custom.rs`); with
+  `api.azure_paths`, the legacy Azure and engine paths map to their catalog endpoint with the model taken
+  from the path (`legacy_path`).
+- **Forwarded endpoints** (dialect `openai_generic`): `POST /v1/systemone` (TypeSafe System One, operation
+  `systemone`), `POST /v1/decisions` (OpenAI Decisions, `decide`), `POST /v1/tasks/{run,stream,batch}`
+  (audio.cpp: music generation, inpainting, separation; `audio_task`) and the operator's
+  `api.custom_endpoints` (`custom`). Each is an inference endpoint: the body's `model` resolves and routes
+  like any other, the identity body (with the deployment's model id) goes to the same operation path below an
+  OpenAI-family base URL (a custom endpoint's `upstream_path`, by default its path without `/v1`, is
+  `Endpoint::custom_path`), and the answer is relayed unchanged (`outcome::generic`): a JSON answer is read
+  whole for its `usage`, `model` and `id`, anything else streams through. Custom paths are checked against
+  the catalog, the reserved prefixes and the passthrough mounts in `antirion-runtime/src/custom_endpoints.rs`.
+- **Capabilities for generic servers**: `openai_compatible` declares every operation except `count_tokens`
+  by default. `capabilities.unrestricted: true` on a provider or a deployment (the deployment's value wins)
+  makes `Capabilities::operation` true for every class and `caps::missing` empty, so no capability check
+  excludes the deployment; the request still goes through translation feasibility and the type's own API.
 - **Streams**: the pump reads SSE, AWS event-stream, NDJSON or a JSON array (`Framing`, chosen in
   `streamed.rs` from the content type, a JSON body starting with `[` being an array) under
   `max_response_bytes`; events of the JSON framings are written again in the client's framing
@@ -1698,6 +1712,10 @@ What the Cache screen reads and changes beyond the cache's own rules.
   fields) are not in it; Gemini and Bedrock native clients are never gathered.
 - Passthrough mounts take no token reservation (requests are counted, not priced) and their records carry
   no attempt.
+- Forwarded endpoints carry no request validation, guardrail segments or response cache; a custom endpoint
+  matches its path exactly (no path parameters). An audio.cpp stream asked for with `stream_format`
+  rather than `stream` is relayed as it arrives but is not a stream to the pipeline, so its usage is the
+  estimate.
 
 - **Responses operations**: `POST /v1/responses/input_tokens` and `/compact` are the `responses`
   endpoint with an `action`; they never stream, cache or keep Responses state. Native deployments
