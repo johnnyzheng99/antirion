@@ -408,6 +408,12 @@ crate can use its strict parser.
   Every node reads the store directly (the shared PostgreSQL in cluster mode); nothing is copied
   between nodes. Retention (`sinks.store.retention`, `content_retention`) runs at most once a minute
   of gateway time, from the writer and from reads, and from the cluster's `retention` job.
+- **Parameter changes** (`params_applied`): `Params::apply` (`antirion-providers/src/params.rs`)
+  records each `params` entry of the provider, then the deployment, that changed the final attempt's
+  upstream body as a `Change` (source, action, pointer, the value set, the value the body had). The
+  record shows the set value always and the client's value only with content logging and without
+  zero data retention (`reqlog/json.rs`); a value over 1 KiB of JSON is shown by its size. An override
+  that sets the value the body already had is no change.
 - **Store** (`antirion-store/src/logs/`): `request_logs` and `log_rollups`, in `logs.db` beside
   `state.db` in standalone mode (normal synchronisation, its own thread). Queries are written once
   for both backends (`sql.rs`): repeated values are `IN`, set columns `LIKE '%␟v␟%'`, sorting is

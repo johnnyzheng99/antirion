@@ -489,8 +489,10 @@ impl DeploymentRt {
             && (!p.params.is_empty() || !self.params.is_empty())
             && let Ok(mut v) = serde_json::from_slice::<Value>(&body.contiguous())
         {
-            p.params.apply(&mut v, &mut applied);
-            self.params.apply(&mut v, &mut applied);
+            p.params
+                .apply(&mut v, &mut applied, crate::params::Source::Provider);
+            self.params
+                .apply(&mut v, &mut applied, crate::params::Source::Deployment);
             body = Payload::from(serde_json::to_vec(&v).unwrap_or_default());
         }
         let mut headers = HeaderMap::new();

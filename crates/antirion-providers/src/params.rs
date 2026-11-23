@@ -18,17 +18,71 @@ pub struct Params {
     pub overrides: Vec<(Pointer, Value)>,
 }
 
-/// The pointers that changed a body, for the request log.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// The level whose `params` block made a change.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Source {
+    Provider,
+    Deployment,
+}
+
+impl Source {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Source::Provider => "provider",
+            Source::Deployment => "deployment",
+        }
+    }
+}
+
+/// What an entry did to the body.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Action {
+    /// A `remove` entry took a member out.
+    Removed,
+    /// A `defaults` entry set a member the body did not have.
+    Default,
+    /// An `overrides` entry set a member, replacing what the body had, if anything.
+    Override,
+}
+
+impl Action {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Action::Removed => "removed",
+            Action::Default => "default",
+            Action::Override => "override",
+        }
+    }
+}
+
+/// One change a `params` entry made to a body: where it came from, what it did at which pointer,
+/// the value it set (none for a removal) and the value the body had there before (none when the
+/// member was absent).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Change {
+    pub source: Source,
+    pub action: Action,
+    pub pointer: String,
+    pub value: Option<Value>,
+    pub previous: Option<Value>,
+}
+
+/// What changed a body, for the request log: the pointers by kind, and each change in application
+/// order.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Applied {
     pub overrides: Vec<String>,
     pub removed: Vec<String>,
+    pub defaults: Vec<String>,
+    pub changes: Vec<Change>,
 }
 
 impl Applied {
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.overrides.is_empty() && self.removed.is_empty()
+        self.changes.is_empty()
     }
 }
 
@@ -96,20 +150,39 @@ impl Params {
         self.remove.is_empty() && self.defaults.is_empty() && self.overrides.is_empty()
     }
 
-    /// Applies the block: removals, then defaults, then overrides. An entry whose parent is not a
-    /// container is skipped.
-    pub fn apply(&self, body: &mut Value, applied: &mut Applied) {
+    /// Applies the block of `source`: removals, then defaults, then overrides, recording each
+    /// change. An entry whose parent is not a container is skipped, and so is an override that sets
+    /// the value the body already had.
+    pub fn apply(&self, body: &mut Value, applied: &mut Applied, source: Source) {
+        let change = |action, pointer: &Pointer, value: Option<&Value>, previous| Change {
+            source,
+            action,
+            pointer: pointer.text.clone(),
+            value: value.cloned(),
+            previous,
+        };
         for p in &self.remove {
-            if remove(body, &p.tokens) {
+            if let Some(previous) = remove(body, &p.tokens) {
                 applied.removed.push(p.text.clone());
+                applied
+                    .changes
+                    .push(change(Action::Removed, p, None, Some(previous)));
             }
         }
         for (p, v) in &self.defaults {
-            set(body, &p.tokens, v, false);
+            if set(body, &p.tokens, v, false).is_some() {
+                applied.defaults.push(p.text.clone());
+                applied.changes.push(change(Action::Default, p, Some(v), None));
+            }
         }
         for (p, v) in &self.overrides {
-            if set(body, &p.tokens, v, true) {
+            if let Some(previous) = set(body, &p.tokens, v, true)
+                && previous.as_ref() != Some(v)
+            {
                 applied.overrides.push(p.text.clone());
+                applied
+                    .changes
+                    .push(change(Action::Override, p, Some(v), previous));
             }
         }
     }
@@ -133,44 +206,40 @@ fn parent_mut<'a>(body: &'a mut Value, tokens: &[String], create: bool) -> Optio
     Some(cur)
 }
 
-fn remove(body: &mut Value, tokens: &[String]) -> bool {
-    let Some(last) = tokens.last() else { return false };
-    match parent_mut(body, tokens, false) {
-        Some(Value::Object(m)) => m.remove(last).is_some(),
-        Some(Value::Array(a)) => match last.parse::<usize>() {
-            Ok(i) if i < a.len() => {
-                a.remove(i);
-                true
-            }
-            _ => false,
+/// Removes the member at `tokens`, returning the value it had.
+fn remove(body: &mut Value, tokens: &[String]) -> Option<Value> {
+    let last = tokens.last()?;
+    match parent_mut(body, tokens, false)? {
+        Value::Object(m) => m.remove(last),
+        Value::Array(a) => match last.parse::<usize>() {
+            Ok(i) if i < a.len() => Some(a.remove(i)),
+            _ => None,
         },
-        _ => false,
+        _ => None,
     }
 }
 
-fn set(body: &mut Value, tokens: &[String], v: &Value, replace: bool) -> bool {
-    let Some(last) = tokens.last() else { return false };
+/// Sets the member at `tokens` (only when absent unless `replace`). `None` when nothing was set,
+/// else the value the member had before (`Some(None)` when it was absent).
+fn set(body: &mut Value, tokens: &[String], v: &Value, replace: bool) -> Option<Option<Value>> {
+    let last = tokens.last()?;
     match parent_mut(body, tokens, true) {
         Some(Value::Object(m)) => {
             if !replace && m.contains_key(last) {
-                return false;
+                return None;
             }
-            m.insert(last.clone(), v.clone());
-            true
+            Some(m.insert(last.clone(), v.clone()))
         }
         Some(Value::Array(a)) => match last.parse::<usize>().ok().and_then(|i| a.get_mut(i)) {
-            Some(slot) if replace => {
-                *slot = v.clone();
-                true
-            }
-            _ => false,
+            Some(slot) if replace => Some(Some(std::mem::replace(slot, v.clone()))),
+            _ => None,
         },
         _ => {
             tracing::debug!(
                 pointer = tokens.join("/"),
                 "params entry skipped: parent is not a container"
             );
-            false
+            None
         }
     }
 }
@@ -197,14 +266,48 @@ mod tests {
         assert!(errors.is_empty());
         let mut body = json!({"temperature": 0.9, "messages": [{"role": "user"}]});
         let mut applied = Applied::default();
-        p.apply(&mut body, &mut applied);
+        p.apply(&mut body, &mut applied, Source::Deployment);
         assert_eq!(
             body,
             json!({"temperature": 0.2, "top_p": 0.7, "metadata": {"team": "s"}, "n": null,
                    "messages": [{"role": "user"}]})
         );
         assert_eq!(applied.removed, ["/temperature"]);
+        assert_eq!(applied.defaults, ["/metadata/team", "/temperature", "/top_p"]);
         assert_eq!(applied.overrides, ["/n", "/top_p"]);
+        let seen: Vec<_> = applied
+            .changes
+            .iter()
+            .map(|c| {
+                (
+                    c.action.as_str(),
+                    c.pointer.as_str(),
+                    c.value.clone(),
+                    c.previous.clone(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            seen,
+            [
+                ("removed", "/temperature", None, Some(json!(0.9))),
+                ("default", "/metadata/team", Some(json!("s")), None),
+                ("default", "/temperature", Some(json!(0.2)), None),
+                ("default", "/top_p", Some(json!(0.5)), None),
+                ("override", "/n", Some(Value::Null), None),
+                ("override", "/top_p", Some(json!(0.7)), Some(json!(0.5))),
+            ]
+        );
+        assert!(applied.changes.iter().all(|c| c.source == Source::Deployment));
+    }
+
+    #[test]
+    fn an_override_to_the_same_value_is_no_change() {
+        let (p, _) = params(json!({"overrides": {"/temperature": 0.2, "/messages/0/role": "user"}}));
+        let mut body = json!({"temperature": 0.2, "messages": [{"role": "user"}]});
+        let mut applied = Applied::default();
+        p.apply(&mut body, &mut applied, Source::Provider);
+        assert!(applied.is_empty(), "{applied:?}");
     }
 
     #[test]
@@ -219,7 +322,7 @@ mod tests {
         }
         let mut body = json!({"messages": [{"a": 1}]});
         let (p, _) = params(json!({"overrides": {"/messages/0/a": 2}}));
-        p.apply(&mut body, &mut Applied::default());
+        p.apply(&mut body, &mut Applied::default(), Source::Provider);
         assert_eq!(body, json!({"messages": [{"a": 2}]}));
     }
 }
