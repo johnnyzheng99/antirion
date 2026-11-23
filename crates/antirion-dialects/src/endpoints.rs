@@ -17,6 +17,10 @@ pub enum Dialect {
     OpenAiFiles,
     OpenAiBatches,
     OpenAiRealtime,
+    /// A JSON call that names its `model` and is forwarded as it is to the same operation path on an
+    /// OpenAI-family deployment: TypeSafe System One, OpenAI Decisions, audio.cpp tasks and the
+    /// operator's custom endpoints.
+    OpenAiGeneric,
     /// Cohere-style rerank.
     Rerank,
     AnthropicMessages,
@@ -398,6 +402,40 @@ pub fn match_endpoint(method: &Method, raw_path: &str) -> Matched {
             (
                 POST,
                 Some(inference("audio", "audio", Dialect::OpenAiAudio, Some(upstream))),
+            )
+        }
+        ["v1", "systemone"] => (
+            POST,
+            Some(inference(
+                "systemone",
+                "systemone",
+                Dialect::OpenAiGeneric,
+                Some("/systemone"),
+            )),
+        ),
+        ["v1", "decisions"] => (
+            POST,
+            Some(inference(
+                "decisions",
+                "decisions",
+                Dialect::OpenAiGeneric,
+                Some("/decisions"),
+            )),
+        ),
+        ["v1", "tasks", op @ ("run" | "stream" | "batch")] => {
+            let upstream = match *op {
+                "run" => "/tasks/run",
+                "stream" => "/tasks/stream",
+                _ => "/tasks/batch",
+            };
+            (
+                POST,
+                Some(inference(
+                    "audio_tasks",
+                    "audio_tasks",
+                    Dialect::OpenAiGeneric,
+                    Some(upstream),
+                )),
             )
         }
         ["v1", "messages"] => (
@@ -861,6 +899,28 @@ mod tests {
             Some("/images/variations")
         );
         assert_eq!(found(Method::GET, "/v1/realtime").kind, Kind::Realtime);
+        for (path, id, upstream) in [
+            ("/v1/systemone", "systemone", "/systemone"),
+            ("/v1/decisions", "decisions", "/decisions"),
+            ("/v1/tasks/run", "audio_tasks", "/tasks/run"),
+            ("/v1/tasks/stream", "audio_tasks", "/tasks/stream"),
+            ("/v1/tasks/batch", "audio_tasks", "/tasks/batch"),
+        ] {
+            let e = found(Method::POST, path);
+            assert_eq!(
+                (e.id, e.dialect, e.kind, e.upstream_path),
+                (id, Dialect::OpenAiGeneric, Kind::Inference, Some(upstream)),
+                "{path}"
+            );
+        }
+        assert_eq!(
+            match_endpoint(&Method::GET, "/v1/decisions"),
+            Matched::MethodNotAllowed(POST)
+        );
+        assert_eq!(
+            match_endpoint(&Method::POST, "/v1/tasks/other"),
+            Matched::NotFound
+        );
         assert_eq!(
             match_endpoint(&Method::POST, "/v1/files/a/b/c"),
             Matched::NotSupported

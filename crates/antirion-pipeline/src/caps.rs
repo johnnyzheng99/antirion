@@ -187,6 +187,9 @@ fn served_paths(d: &DeploymentRt) -> Vec<&'static str> {
         ("transcribe", "/v1/audio/transcriptions"),
         ("moderate", "/v1/moderations"),
         ("count_tokens", "/v1/messages/count_tokens"),
+        ("systemone", "/v1/systemone"),
+        ("decide", "/v1/decisions"),
+        ("audio_task", "/v1/tasks/run"),
     ]
     .into_iter()
     .filter(|(class, _)| d.capabilities.operation(class))

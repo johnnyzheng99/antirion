@@ -124,7 +124,8 @@ pub(crate) fn generates(endpoint: &Endpoint) -> bool {
             | Dialect::Rerank
             | Dialect::OpenAiFiles
             | Dialect::OpenAiBatches
-    ) && !endpoint.id.contains("count_tokens")
+    ) && !matches!(endpoint.id, "systemone" | "decisions")
+        && !endpoint.id.contains("count_tokens")
         && !matches!(endpoint.action, Some("input_tokens" | "compact"))
         && !endpoint.id.to_ascii_lowercase().contains("embed")
         && !endpoint.id.to_ascii_lowercase().contains("counttokens")

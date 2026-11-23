@@ -392,6 +392,16 @@ mod tests {
             ],
         ),
         ("rerank", &[(Method::POST, "/v1/rerank")]),
+        ("systemone", &[(Method::POST, "/v1/systemone")]),
+        ("decisions", &[(Method::POST, "/v1/decisions")]),
+        (
+            "audio_tasks",
+            &[
+                (Method::POST, "/v1/tasks/run"),
+                (Method::POST, "/v1/tasks/stream"),
+                (Method::POST, "/v1/tasks/batch"),
+            ],
+        ),
     ];
 
     fn off(id: &str) -> Value {

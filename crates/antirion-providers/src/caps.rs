@@ -71,6 +71,24 @@ pub const FLAGS: &[&str] = &[
     "responses_native",
 ];
 
+/// Every operation class, in table order.
+pub const OPERATIONS: &[&str] = &[
+    "generate",
+    "embed",
+    "image_generate",
+    "transcribe",
+    "speech",
+    "moderate",
+    "rerank",
+    "count_tokens",
+    "files",
+    "batches",
+    "realtime",
+    "systemone",
+    "decide",
+    "audio_task",
+];
+
 /// Where a resolved flag came from.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Source {
@@ -188,23 +206,11 @@ impl Capabilities {
                     .unwrap_or_else(|| kind.catalog().dialects.to_vec()),
             ),
             "operations" => Value::from(
-                [
-                    "generate",
-                    "embed",
-                    "image_generate",
-                    "transcribe",
-                    "speech",
-                    "moderate",
-                    "rerank",
-                    "count_tokens",
-                    "files",
-                    "batches",
-                    "realtime",
-                ]
-                .iter()
-                .filter(|c| default_operation(kind, c))
-                .copied()
-                .collect::<Vec<_>>(),
+                OPERATIONS
+                    .iter()
+                    .filter(|c| default_operation(kind, c))
+                    .copied()
+                    .collect::<Vec<_>>(),
             ),
             "n_multiple" | "logprobs" | "json_mode" => Value::Bool(!self.anthropic_like()),
             "context_window"
@@ -303,7 +309,7 @@ impl Capabilities {
 
 fn default_operation(kind: ProviderType, class: &str) -> bool {
     match kind {
-        ProviderType::OpenAi | ProviderType::AzureOpenAi => true,
+        ProviderType::OpenAi | ProviderType::AzureOpenAi => !matches!(class, "systemone" | "audio_task"),
         ProviderType::OpenAiCompatible | ProviderType::Mistral => matches!(class, "generate" | "embed"),
         ProviderType::Preset(p) => class == "generate" || (class == "embed" && p.embeds()),
         ProviderType::Anthropic => matches!(class, "generate" | "count_tokens" | "files" | "batches"),

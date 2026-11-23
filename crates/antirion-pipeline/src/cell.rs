@@ -248,6 +248,9 @@ pub(crate) fn operation_class(endpoint: &Endpoint) -> &'static str {
         ("moderations", _, _) => "moderate",
         ("audio", Some("/audio/speech"), _) => "speech",
         ("audio", _, _) => "transcribe",
+        ("systemone", _, _) => "systemone",
+        ("decisions", _, _) => "decide",
+        ("audio_tasks", _, _) => "audio_task",
         _ if endpoint.counts_tokens() => "count_tokens",
         _ => "generate",
     }

@@ -31,6 +31,9 @@ pub(crate) enum Api {
     EmbedNative(antirion_dialects::embed::EmbedApi),
     /// A provider's rerank API.
     Rerank,
+    /// A JSON answer of an endpoint forwarded as it is (System One, Decisions, audio tasks, custom
+    /// endpoints): relayed unchanged, with the usage, model and id it reports read for the record.
+    Generic,
     /// Bodies relayed as they are (audio, images).
     Other,
 }
@@ -74,6 +77,7 @@ pub(crate) fn upstream_api(endpoint: &Endpoint, cell: Cell) -> Api {
             (_, "responses", _) => Api::Responses,
             (_, "embeddings", _) => Api::Embeddings,
             (_, "moderations", _) => Api::Moderations,
+            (Dialect::OpenAiGeneric, _, _) => Api::Generic,
             _ => Api::Other,
         },
     }
@@ -100,6 +104,7 @@ fn client_id(endpoint: &Endpoint) -> &'static str {
         Dialect::OpenAiFiles => "openai_files",
         Dialect::OpenAiBatches => "openai_batches",
         Dialect::OpenAiRealtime => "openai_realtime",
+        Dialect::OpenAiGeneric => "openai_generic",
         Dialect::Rerank => "rerank",
     }
 }
@@ -127,7 +132,7 @@ pub(crate) fn dialect_names(endpoint: &Endpoint, cell: Cell) -> (&'static str, &
             }
         }
         Api::Rerank => "rerank",
-        Api::Moderations | Api::Other => client,
+        Api::Moderations | Api::Generic | Api::Other => client,
     };
     (client, upstream)
 }
@@ -185,7 +190,9 @@ pub(crate) fn usable(api: Api, v: &Value) -> bool {
         Api::GeminiCount => v.get("totalTokens").is_some_and(Value::is_u64),
         Api::Converse => v.get("output").is_some_and(Value::is_object),
         Api::Cohere => v.get("message").is_some_and(Value::is_object),
-        Api::Responses | Api::Invoke | Api::Other | Api::EmbedNative(_) | Api::Rerank => v.is_object(),
+        Api::Responses | Api::Invoke | Api::Generic | Api::Other | Api::EmbedNative(_) | Api::Rerank => {
+            v.is_object()
+        }
     }
 }
 

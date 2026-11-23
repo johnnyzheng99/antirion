@@ -183,6 +183,7 @@ impl ProviderType {
                 | Dialect::OpenAiImages
                 | Dialect::OpenAiAudio
                 | Dialect::OpenAiModerations
+                | Dialect::OpenAiGeneric
         );
         self.openai_family() && openai_dialect
     }

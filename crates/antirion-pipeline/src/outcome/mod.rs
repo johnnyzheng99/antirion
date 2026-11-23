@@ -440,6 +440,7 @@ pub(crate) async fn handle(a: &Attempt<'_>, up: InboundResponse) -> Result<(Done
         }
         Some(_) if a.aggregate => crate::aggregate::collect(a, up, api).await,
         _ if api == apis::Api::Embeddings => embeddings(a, up).await,
+        _ if api == apis::Api::Generic => generic(a, up).await,
         _ if api == apis::Api::Other && (counts_units(a, &up.headers) || transcript::applies(a)) => {
             counted(a, up).await
         }
@@ -513,6 +514,43 @@ async fn embeddings(a: &Attempt<'_>, up: InboundResponse) -> Result<(Done, Class
     if let Some(slot) = &a.plan.cache {
         crate::cache::store_response(a, slot, status.as_u16(), &content_type, &raw, &headers).await;
     }
+    let mut resp = Response::new(full(raw));
+    *resp.status_mut() = status;
+    resp.headers_mut().insert(CONTENT_TYPE, content_type);
+    response_head(a, &mut resp, status.as_u16(), &headers);
+    Ok((Done::Response(resp), Class::Success))
+}
+
+/// The answer of an endpoint forwarded as it is. A JSON answer is read whole (within
+/// `max_upstream_response`) for the `usage`, `model` and `id` it reports, so settlement prices the
+/// tokens the upstream counted, and relayed unchanged; any other answer (an event stream, audio) is
+/// relayed as it arrives and settled on the estimate.
+async fn generic(a: &Attempt<'_>, up: InboundResponse) -> Result<(Done, Class), Failure> {
+    if !is_json(crate::attempt::essence(&up.headers).as_deref()) {
+        a.record(Some(up.status.as_u16()), Class::Success, None);
+        return Ok((Done::Response(raw_passthrough(a, up)), Class::Success));
+    }
+    let status = up.status;
+    let InboundResponse { headers, body, .. } = up;
+    let raw = match a.read(body, a.body_cap()).await? {
+        Ok(b) => b,
+        Err(why) => return Err(a.unread(why, status.as_u16())),
+    };
+    a.record(Some(status.as_u16()), Class::Success, None);
+    if let Ok(v) = serde_json::from_slice::<Value>(&raw) {
+        let usage = apis::usage_of(&v);
+        a.cx.log.update(|r| {
+            r.usage = usage;
+            r.usage_raw = v.get("usage").cloned();
+            r.response_model = v.get("model").and_then(Value::as_str).map(str::to_owned);
+            r.response_id = v.get("id").and_then(Value::as_str).map(str::to_owned);
+        });
+    }
+    a.cx.log.response_content(&raw);
+    let content_type = headers
+        .get(CONTENT_TYPE)
+        .cloned()
+        .unwrap_or(HeaderValue::from_static("application/json"));
     let mut resp = Response::new(full(raw));
     *resp.status_mut() = status;
     resp.headers_mut().insert(CONTENT_TYPE, content_type);
