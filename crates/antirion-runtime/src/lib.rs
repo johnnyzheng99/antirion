@@ -18,6 +18,7 @@ pub mod client_ip;
 pub mod cluster;
 pub mod commit;
 mod console;
+pub mod custom_endpoints;
 pub mod drain;
 pub mod extstats;
 mod fileonly;

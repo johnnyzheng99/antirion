@@ -296,6 +296,7 @@ mod tests {
             kind: Kind::Inference,
             upstream_path: None,
             path_param: None,
+            custom_path: None,
             action: None,
         }
     }

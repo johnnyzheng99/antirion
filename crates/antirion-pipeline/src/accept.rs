@@ -114,6 +114,15 @@ pub(crate) fn run(cx: &Ctx, parts: &Parts) -> Accepted {
         }
         return Accepted::Respond(cx.error(&e));
     }
+    if let Some(c) = antirion_dialects::normalise(path)
+        .as_deref()
+        .and_then(|p| crate::custom::matched(api, p))
+    {
+        if c.methods.contains(&parts.method) {
+            return Accepted::Endpoint(antirion_dialects::custom(&c.name, &c.upstream));
+        }
+        return Accepted::Respond(cx.error(&method_not_allowed(&c.methods)));
+    }
     let legacy = api
         .and_then(|a| a.get("azure_paths"))
         .is_some_and(|v| v == &serde_json::Value::Bool(true))
@@ -199,6 +208,20 @@ pub(crate) fn run(cx: &Ctx, parts: &Parts) -> Accepted {
         return Accepted::Respond(cx.error(&too_large(Stage::Accept)));
     }
     Accepted::Endpoint(endpoint)
+}
+
+/// The 405 of a path served for other methods, with `Allow` naming them.
+fn method_not_allowed(methods: &[Method]) -> GatewayError {
+    let list: Vec<&str> = methods.iter().map(Method::as_str).collect();
+    let mut e = GatewayError::new(
+        Code::MethodNotAllowed,
+        Stage::Accept,
+        Message::Fixed("Method not allowed on this path."),
+    );
+    if let Ok(v) = HeaderValue::from_str(&list.join(", ")) {
+        e = e.header(ALLOW, v);
+    }
+    e
 }
 
 /// The 404 of a path no endpoint serves; the message names the method and the path (without its

@@ -87,6 +87,7 @@ pub const OPERATIONS: &[&str] = &[
     "systemone",
     "decide",
     "audio_task",
+    "custom",
 ];
 
 /// Where a resolved flag came from.
@@ -310,8 +311,10 @@ impl Capabilities {
 fn default_operation(kind: ProviderType, class: &str) -> bool {
     match kind {
         ProviderType::OpenAi | ProviderType::AzureOpenAi => !matches!(class, "systemone" | "audio_task"),
-        ProviderType::OpenAiCompatible | ProviderType::Mistral => matches!(class, "generate" | "embed"),
-        ProviderType::Preset(p) => class == "generate" || (class == "embed" && p.embeds()),
+        ProviderType::OpenAiCompatible | ProviderType::Mistral => {
+            matches!(class, "generate" | "embed" | "custom")
+        }
+        ProviderType::Preset(p) => matches!(class, "generate" | "custom") || (class == "embed" && p.embeds()),
         ProviderType::Anthropic => matches!(class, "generate" | "count_tokens" | "files" | "batches"),
         ProviderType::AnthropicCompatible => matches!(class, "generate" | "count_tokens"),
         ProviderType::Cohere => matches!(class, "generate" | "embed" | "rerank"),

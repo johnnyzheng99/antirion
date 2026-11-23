@@ -172,7 +172,7 @@ pub(crate) async fn upstream_body(
             (Cell::Translate { .. } | Cell::Embed(_) | Cell::Rerank(_), None)
             | (Cell::Embed(_) | Cell::Rerank(_), _) => Err(untranslatable()),
             (Cell::InvokeAsMessages, _) => Ok((raw.clone().into(), json_type, None)),
-            (Cell::Identity, _) if plan.endpoint.upstream_path.is_some() => Ok((
+            (Cell::Identity, _) if plan.endpoint.upstream().is_some() => Ok((
                 chat_adjust(plan, d, json_body(plan, raw, skim, d)),
                 json_type,
                 None,

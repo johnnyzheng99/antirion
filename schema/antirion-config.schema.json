@@ -710,6 +710,7 @@
         "systemone",
         "decisions",
         "audio_tasks",
+        "custom",
         "*"
       ],
       "description": "Endpoint family or `*`."
@@ -1069,6 +1070,57 @@
           },
           "additionalProperties": false
         },
+        "custom_endpoints": {
+          "type": "object",
+          "description": "Map name → an endpoint the operator adds: a model call whose JSON body names its `model`, routed like any catalog endpoint and forwarded as it is to `upstream_path` below the deployment's base URL.",
+          "propertyNames": {
+            "$ref": "#/$defs/Name"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "pattern": "^(/[A-Za-z0-9._~:@!$&'()*+,;=-]+)+$",
+                "maxLength": 512,
+                "description": "The path apps call, such as /v1/music/generate; matched exactly."
+              },
+              "upstream_path": {
+                "type": "string",
+                "pattern": "^(/[A-Za-z0-9._~:@!$&'()*+,;=-]+)+$",
+                "maxLength": 512,
+                "description": "The operation path below the deployment's base URL; default the path without its leading /v1."
+              },
+              "methods": {
+                "type": "array",
+                "items": {
+                  "enum": [
+                    "POST",
+                    "PUT",
+                    "PATCH"
+                  ]
+                },
+                "minItems": 1,
+                "uniqueItems": true,
+                "default": [
+                  "POST"
+                ]
+              },
+              "enabled": {
+                "type": "boolean",
+                "default": true
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "path"
+            ],
+            "additionalProperties": false
+          }
+        },
         "passthrough": {
           "type": "object",
           "propertyNames": {
@@ -1215,7 +1267,8 @@
               "realtime",
               "systemone",
               "decide",
-              "audio_task"
+              "audio_task",
+              "custom"
             ]
           },
           "uniqueItems": true
@@ -1694,7 +1747,8 @@
               "realtime",
               "systemone",
               "decide",
-              "audio_task"
+              "audio_task",
+              "custom"
             ]
           },
           "additionalProperties": {
