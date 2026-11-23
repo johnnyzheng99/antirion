@@ -349,6 +349,7 @@ mod tests {
             &[
                 (Method::POST, "/v1/audio/speech"),
                 (Method::POST, "/v1/audio/transcriptions"),
+                (Method::POST, "/v1/audio/transcriptions/details"),
             ],
         ),
         ("moderations", &[(Method::POST, "/v1/moderations")]),

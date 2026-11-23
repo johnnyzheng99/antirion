@@ -118,7 +118,13 @@ impl Parsed {
 pub(crate) fn is_multipart(endpoint: &Endpoint) -> bool {
     matches!(
         endpoint.upstream_path,
-        Some("/audio/transcriptions" | "/audio/translations" | "/images/edits" | "/images/variations")
+        Some(
+            "/audio/transcriptions"
+                | "/audio/transcriptions/details"
+                | "/audio/translations"
+                | "/images/edits"
+                | "/images/variations"
+        )
     )
 }
 

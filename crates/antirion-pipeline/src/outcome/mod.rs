@@ -564,7 +564,7 @@ fn counts_units(a: &Attempt<'_>, headers: &HeaderMap) -> bool {
         antirion_dialects::Dialect::OpenAiImages => true,
         antirion_dialects::Dialect::OpenAiAudio => matches!(
             a.plan.endpoint.upstream_path,
-            Some("/audio/transcriptions" | "/audio/translations")
+            Some("/audio/transcriptions" | "/audio/transcriptions/details" | "/audio/translations")
         ),
         _ => false,
     };

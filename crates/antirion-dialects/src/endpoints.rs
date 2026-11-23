@@ -404,6 +404,15 @@ pub fn match_endpoint(method: &Method, raw_path: &str) -> Matched {
                 Some(inference("audio", "audio", Dialect::OpenAiAudio, Some(upstream))),
             )
         }
+        ["v1", "audio", "transcriptions", "details"] => (
+            POST,
+            Some(inference(
+                "audio",
+                "audio",
+                Dialect::OpenAiAudio,
+                Some("/audio/transcriptions/details"),
+            )),
+        ),
         ["v1", "systemone"] => (
             POST,
             Some(inference(
@@ -899,6 +908,11 @@ mod tests {
             Some("/images/variations")
         );
         assert_eq!(found(Method::GET, "/v1/realtime").kind, Kind::Realtime);
+        let details = found(Method::POST, "/v1/audio/transcriptions/details");
+        assert_eq!(
+            (details.id, details.upstream_path),
+            ("audio", Some("/audio/transcriptions/details"))
+        );
         for (path, id, upstream) in [
             ("/v1/systemone", "systemone", "/systemone"),
             ("/v1/decisions", "decisions", "/decisions"),
