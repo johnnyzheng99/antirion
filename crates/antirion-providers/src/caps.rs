@@ -311,9 +311,10 @@ impl Capabilities {
 fn default_operation(kind: ProviderType, class: &str) -> bool {
     match kind {
         ProviderType::OpenAi | ProviderType::AzureOpenAi => !matches!(class, "systemone" | "audio_task"),
-        ProviderType::OpenAiCompatible | ProviderType::Mistral => {
-            matches!(class, "generate" | "embed" | "custom")
-        }
+        // Every endpoint operation; token counting stays off, so a count without a native API is
+        // still answered from the local estimate rather than sent to a server that rarely has one.
+        ProviderType::OpenAiCompatible => class != "count_tokens",
+        ProviderType::Mistral => matches!(class, "generate" | "embed" | "custom"),
         ProviderType::Preset(p) => matches!(class, "generate" | "custom") || (class == "embed" && p.embeds()),
         ProviderType::Anthropic => matches!(class, "generate" | "count_tokens" | "files" | "batches"),
         ProviderType::AnthropicCompatible => matches!(class, "generate" | "count_tokens"),
