@@ -64,7 +64,7 @@ export function modalityFor(caps: Caps | undefined, upstream: string | undefined
     if (ops.includes('embed')) return 'embeddings';
     if (ops.includes('rerank')) return 'rerank';
     if (ops.includes('image_generate')) return 'image';
-    if (ops.includes('transcribe') || ops.includes('speech')) return 'audio';
+    if (ops.includes('transcribe') || ops.includes('speech') || ops.includes('audio_task')) return 'audio';
     return 'other';
   }
   for (const [re, m] of BY_NAME) if (upstream && re.test(upstream)) return m;

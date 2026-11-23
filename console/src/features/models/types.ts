@@ -125,7 +125,8 @@ export function modalityOf(operations: string[] | undefined): Modality {
   if (operations.includes('embed')) return 'embeddings';
   if (operations.includes('rerank')) return 'rerank';
   if (operations.includes('image_generate')) return 'image';
-  if (operations.includes('transcribe') || operations.includes('speech')) return 'audio';
+  if (operations.includes('transcribe') || operations.includes('speech') || operations.includes('audio_task'))
+    return 'audio';
   return 'other';
 }
 
