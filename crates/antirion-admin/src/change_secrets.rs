@@ -17,7 +17,13 @@ fn place(change: &Value) -> Option<Place> {
     let path = change.get("path")?.as_str()?;
     let rel = path.strip_prefix("/admin/v1").unwrap_or(path);
     let rel = rel.split('?').next().unwrap_or_default();
-    let segs: Vec<&str> = rel.split('/').filter(|s| !s.is_empty()).collect();
+    // Each segment decoded once split, so a name with `/` (sent as `%2F`) stays one name.
+    let decoded: Vec<String> = rel
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .map(crate::percent_decode)
+        .collect();
+    let segs: Vec<&str> = decoded.iter().map(String::as_str).collect();
     let body_name = || {
         change
             .pointer("/body/name")
