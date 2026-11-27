@@ -6652,7 +6652,7 @@ export interface components {
             token_file?: never;
         };
         Weight: number;
-        "$defs-ProviderType": "openai" | "azure_openai" | "anthropic" | "bedrock" | "vertex" | "gemini" | "openai_compatible" | "anthropic_compatible" | "mistral" | "cohere" | "groq" | "together" | "fireworks" | "deepseek" | "xai" | "cerebras" | "deepinfra" | "perplexity" | "huggingface" | "replicate" | "databricks" | "sagemaker" | "watsonx" | "ollama_native" | "triton";
+        "$defs-ProviderType": "openai" | "azure_openai" | "anthropic" | "bedrock" | "vertex" | "gemini" | "openai_compatible" | "anthropic_compatible" | "mistral" | "cohere" | "groq" | "together" | "fireworks" | "deepseek" | "xai" | "cerebras" | "deepinfra" | "perplexity" | "cloudflare" | "huggingface" | "replicate" | "databricks" | "sagemaker" | "watsonx" | "ollama_native" | "triton";
         BaseUrl: string;
         ProviderAuth: {
             method?: "api_key" | "aws_sigv4" | "gcp" | "azure_ad" | "none";
@@ -8068,6 +8068,9 @@ export interface components {
             aws?: {
                 region: string;
             };
+            cloudflare?: {
+                account_id: string;
+            };
             gcp?: {
                 project?: string;
                 location?: string;
@@ -8078,7 +8081,7 @@ export interface components {
             };
             account_tier?: string;
             credential_rotation_max_age?: components["schemas"]["$defs-Duration"];
-        } & (unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown);
+        } & (unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown);
         Deployment: {
             provider: components["schemas"]["ProviderName"];
             model: string;
@@ -9250,7 +9253,7 @@ export interface components {
                 ModelPattern: string;
                 EndpointId: "chat_completions" | "responses" | "completions" | "embeddings" | "images" | "audio" | "moderations" | "files" | "batches" | "realtime" | "messages" | "count_tokens" | "models" | "gemini" | "bedrock" | "rerank" | "systemone" | "decisions" | "audio_tasks";
                 Dialect: "openai_chat" | "openai_responses" | "openai_completions" | "openai_embeddings" | "openai_images" | "openai_audio" | "openai_moderations" | "openai_files" | "openai_batches" | "openai_realtime" | "anthropic_messages" | "gemini" | "bedrock_converse" | "bedrock_invoke" | "rerank" | "openai_generic";
-                ProviderType: "openai" | "azure_openai" | "anthropic" | "bedrock" | "vertex" | "gemini" | "openai_compatible" | "anthropic_compatible" | "mistral" | "cohere" | "groq" | "together" | "fireworks" | "deepseek" | "xai" | "cerebras" | "deepinfra" | "perplexity" | "huggingface" | "replicate" | "databricks" | "sagemaker" | "watsonx" | "ollama_native" | "triton";
+                ProviderType: "openai" | "azure_openai" | "anthropic" | "bedrock" | "vertex" | "gemini" | "openai_compatible" | "anthropic_compatible" | "mistral" | "cohere" | "groq" | "together" | "fireworks" | "deepseek" | "xai" | "cerebras" | "deepinfra" | "perplexity" | "cloudflare" | "huggingface" | "replicate" | "databricks" | "sagemaker" | "watsonx" | "ollama_native" | "triton";
                 EndpointFamily: "chat" | "responses" | "messages" | "embeddings" | "images" | "audio" | "moderations" | "rerank" | "files" | "batches" | "realtime" | "models" | "gemini" | "bedrock" | "mcp" | "a2a" | "systemone" | "decisions" | "audio_tasks" | "custom" | "*";
                 ClientTls: {
                     verify?: boolean;
@@ -9465,6 +9468,9 @@ export interface components {
                     aws?: {
                         region: string;
                     };
+                    cloudflare?: {
+                        account_id: string;
+                    };
                     gcp?: {
                         project?: string;
                         location?: string;
@@ -9475,7 +9481,7 @@ export interface components {
                     };
                     account_tier?: string;
                     credential_rotation_max_age?: components["schemas"]["$defs-Duration"];
-                } & (unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown);
+                } & (unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown);
                 Weights: {
                     [key: string]: components["schemas"]["Decimal"];
                 };

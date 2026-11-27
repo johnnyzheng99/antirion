@@ -15,6 +15,7 @@ const COLORS: Record<string, string> = {
   xai: 'bg-[#6b6b6b]',
   openai_compatible: 'bg-[#5b8def]',
   anthropic_compatible: 'bg-[#c4704f]',
+  cloudflare: 'bg-[#f38020]',
 };
 
 export function providerColor(type: string | undefined): string {
@@ -40,6 +41,7 @@ const LABELS: Record<string, string> = {
   cerebras: 'Cerebras',
   deepinfra: 'DeepInfra',
   perplexity: 'Perplexity',
+  cloudflare: 'Cloudflare',
   huggingface: 'Hugging Face',
   replicate: 'Replicate',
   databricks: 'Databricks',

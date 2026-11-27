@@ -57,7 +57,6 @@ export const useProviders = create<ProvidersState>()((set, get) => ({
   },
 
   async loadTypes() {
-    if (get().types.data) return;
     await loadSlot(set, get, 'types', providersApi.types);
   },
 

@@ -249,6 +249,20 @@ export function AddProviderDrawer({
                 </Field>
               </div>
             ) : null}
+            {values.type === 'cloudflare' ? (
+              <Field
+                label="Account ID"
+                error={errors.cloudflareAccountId}
+                required
+                hint="From the Cloudflare dashboard under Workers AI → Use REST API."
+              >
+                <Input
+                  mono
+                  value={values.cloudflareAccountId}
+                  onChange={(e) => set('cloudflareAccountId', e.target.value)}
+                />
+              </Field>
+            ) : null}
             {methods.length > 1 ? (
               <Field label="Sign in with">
                 <Segmented<AuthMethod>

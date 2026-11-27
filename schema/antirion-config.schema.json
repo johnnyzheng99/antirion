@@ -679,6 +679,7 @@
         "cerebras",
         "deepinfra",
         "perplexity",
+        "cloudflare",
         "huggingface",
         "replicate",
         "databricks",
@@ -1875,6 +1876,20 @@
           ],
           "additionalProperties": false
         },
+        "cloudflare": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Cloudflare account ID for Workers AI."
+            }
+          },
+          "required": [
+            "account_id"
+          ],
+          "additionalProperties": false
+        },
         "gcp": {
           "type": "object",
           "properties": {
@@ -2087,6 +2102,23 @@
           "then": {
             "required": [
               "aws"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "cloudflare"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "required": [
+              "cloudflare"
             ]
           }
         },

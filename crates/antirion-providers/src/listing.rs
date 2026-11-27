@@ -17,7 +17,7 @@ use parking_lot::Mutex;
 use serde_json::Value;
 
 use crate::url::join;
-use crate::{BuildError, DeploymentRt, ProviderRt, ProviderType, UpstreamAuth};
+use crate::{BuildError, DeploymentRt, Preset, ProviderRt, ProviderType, UpstreamAuth};
 
 /// The listing call of a provider's type.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -48,6 +48,7 @@ impl ProviderRt {
         Some(match self.kind {
             ProviderType::AzureOpenAi => Listing::Azure,
             ProviderType::Mistral => Listing::Mistral,
+            ProviderType::Preset(Preset::Cloudflare) => return None,
             k if k.openai_family() => Listing::OpenAi,
             k if k.anthropic_api() => Listing::Anthropic,
             ProviderType::Gemini => Listing::Gemini,

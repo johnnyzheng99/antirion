@@ -10,9 +10,10 @@ use http::{HeaderMap, HeaderName, HeaderValue};
 use serde_json::Value;
 
 use crate::compile_auth::{compile_auth, key_header};
+use crate::url::fill;
 use crate::{
-    AnthropicSettings, BedrockApi, Byok, Capabilities, DeploymentRt, Params, ProviderRt, ProviderTable,
-    ProviderType, Publisher, UpstreamAuth,
+    AnthropicSettings, BedrockApi, Byok, Capabilities, DeploymentRt, Params, Preset, ProviderRt,
+    ProviderTable, ProviderType, Publisher, UpstreamAuth,
 };
 
 fn header_map(map: &BTreeMap<String, String>, at: &DocPath, errors: &mut Vec<ConfigError>) -> HeaderMap {
@@ -266,6 +267,14 @@ fn provider(
             "required for type bedrock",
         ));
     }
+    let account_id = str_at(spec, &["cloudflare", "account_id"]).map(str::to_owned);
+    if matches!(kind, ProviderType::Preset(Preset::Cloudflare)) && account_id.is_none() {
+        errors.push(ConfigError::new(
+            &at.key("cloudflare").key("account_id"),
+            DetailCode::Required,
+            "required for type cloudflare",
+        ));
+    }
     let project = str_at(spec, &["gcp", "project"]).map(str::to_owned);
     if kind == ProviderType::Vertex && matches!(auth, UpstreamAuth::Gcp(_)) && project.is_none() {
         errors.push(ConfigError::new(
@@ -290,10 +299,18 @@ fn provider(
             .map(|b| b.iter().filter_map(Value::as_str).map(str::to_owned).collect())
             .unwrap_or_default(),
     };
+    let mut base_url = p.base_url.clone();
+    if matches!(kind, ProviderType::Preset(Preset::Cloudflare)) {
+        if let Some(id) = account_id.as_deref() {
+            if base_url.is_none() {
+                base_url = kind.default_base_url().map(|t| fill(t, &[("account_id", id)]));
+            }
+        }
+    }
     Some(ProviderRt {
         name: name.to_owned(),
         kind,
-        base_url: p.base_url.clone(),
+        base_url,
         enabled: p.enabled,
         auth,
         keys,
@@ -307,6 +324,7 @@ fn provider(
         azure_deployments,
         region,
         project,
+        account_id,
         location: str_at(spec, &["gcp", "location"]).unwrap_or("global").to_owned(),
         gemini_version: str_at(spec, &["gemini", "api_version"])
             .unwrap_or("v1beta")
@@ -544,6 +562,10 @@ mod tests {
                 "providers.p.gcp.project",
             ),
             (
+                json!({"type": "cloudflare", "auth": {"api_key": "tok"}}),
+                "providers.p.cloudflare.account_id",
+            ),
+            (
                 json!({"type": "anthropic", "auth": {"method": "aws_sigv4"}}),
                 "providers.p.auth.method",
             ),
@@ -555,6 +577,16 @@ mod tests {
         let ok = compile(&json!({"providers": {"p": {"type": "bedrock", "aws": {"region": "us-east-1"}}}}))
             .unwrap();
         assert!(matches!(ok.providers["p"].auth, UpstreamAuth::Aws(None)));
+        let cf = compile(&json!({
+            "providers": {"p": {"type": "cloudflare", "cloudflare": {"account_id": "acct"},
+                                      "auth": {"api_key": "tok"}}}
+        }))
+        .unwrap();
+        assert_eq!(
+            cf.providers["p"].base_url.as_deref(),
+            Some("https://api.cloudflare.com/client/v4/accounts/acct/ai")
+        );
+        assert!(cf.providers["p"].listing().is_none(), "Workers AI has no GET /models");
     }
 
     #[test]

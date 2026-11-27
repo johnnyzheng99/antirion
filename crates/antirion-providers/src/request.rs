@@ -17,7 +17,7 @@ use crate::body_edit::BodyEdit;
 use crate::creds::{CredError, Credentials, TokenSource};
 use crate::params::Applied;
 use crate::url::{fill, join, segment};
-use crate::{BuildError, DeploymentRt, ProviderType, UpstreamAuth, sigv4};
+use crate::{BuildError, DeploymentRt, Preset, ProviderType, UpstreamAuth, sigv4};
 
 /// What the upstream is asked to do.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -181,7 +181,14 @@ impl DeploymentRt {
         let region = self.region.as_deref().unwrap_or("us-east-1");
         let location = self.location.as_str();
         if let Some(b) = &p.base_url {
-            return Ok(fill(b, &[("region", region), ("location", location)]));
+            return Ok(fill(
+                b,
+                &[
+                    ("region", region),
+                    ("location", location),
+                    ("account_id", p.account_id.as_deref().unwrap_or_default()),
+                ],
+            ));
         }
         Ok(match p.kind {
             ProviderType::Bedrock => format!("https://bedrock-runtime.{region}.amazonaws.com"),
@@ -249,6 +256,7 @@ impl DeploymentRt {
                     ("project", p.project.as_deref().unwrap_or_default()),
                     ("location", &self.location),
                     ("region", self.region.as_deref().unwrap_or_default()),
+                    ("account_id", p.account_id.as_deref().unwrap_or_default()),
                     ("api_version", &p.gemini_version),
                 ],
             );
@@ -271,6 +279,14 @@ impl DeploymentRt {
                 },
             ) => ("/openai/v1/chat/completions".to_owned(), Vec::new()),
             (ProviderType::Bedrock, UpstreamOp::OpenAi { .. }) => return Err(BuildError::Unsupported),
+            (ProviderType::Preset(Preset::Cloudflare), UpstreamOp::OpenAi { path, .. }) => {
+                let path = if path.starts_with("/v1/") || path == "/v1" {
+                    path.to_owned()
+                } else {
+                    format!("/v1{path}")
+                };
+                (path, Vec::new())
+            }
             (_, UpstreamOp::OpenAi { path, .. }) => (path.to_owned(), Vec::new()),
             (ProviderType::Cohere, UpstreamOp::CohereChat) => ("/v2/chat".to_owned(), Vec::new()),
             (k, UpstreamOp::Messages) if k.anthropic_api() => ("/v1/messages".to_owned(), Vec::new()),
@@ -665,6 +681,32 @@ mod tests {
         assert_eq!(r.headers["x-escaped"], "a$b");
         assert_eq!(r.headers["x-dep"], "1");
         assert_eq!(r.headers["x-client-request-id"], rid.as_str());
+    }
+
+    #[test]
+    fn cloudflare_request() {
+        let t = table(json!({
+            "providers": {"p": {"type": "cloudflare", "cloudflare": {"account_id": "acct"},
+                           "auth": {"api_key": "k"}}},
+            "deployments": {"d": {"provider": "p", "model": "@cf/meta/llama-3.1-8b-instruct-fast"}}
+        }));
+        let rid = RequestId::generate();
+        let r = t.deployments["d"]
+            .build_request(call(
+                UpstreamOp::OpenAi {
+                    class: "generate",
+                    path: "/chat/completions",
+                },
+                false,
+                b"{}",
+                &rid,
+            ))
+            .unwrap()
+            .request;
+        assert_eq!(
+            r.uri.to_string(),
+            "https://api.cloudflare.com/client/v4/accounts/acct/ai/v1/chat/completions"
+        );
     }
 
     #[test]

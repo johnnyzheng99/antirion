@@ -29,6 +29,7 @@ export interface ProviderValues {
   region: string;
   gcpProject: string;
   gcpLocation: string;
+  cloudflareAccountId: string;
 }
 
 export const EMPTY_PROVIDER: ProviderValues = {
@@ -46,6 +47,7 @@ export const EMPTY_PROVIDER: ProviderValues = {
   region: '',
   gcpProject: '',
   gcpLocation: '',
+  cloudflareAccountId: '',
 };
 
 /** The core types first, then the rest by name. */
@@ -97,6 +99,7 @@ export function providerSchema(type: ProviderType | undefined, taken: string[]) 
       region: z.string().trim(),
       gcpProject: z.string().trim(),
       gcpLocation: z.string().trim(),
+      cloudflareAccountId: z.string().trim(),
     })
     .superRefine((v, ctx) => {
       if (type?.default_base_url === null && v.baseUrl.trim() === '')
@@ -124,6 +127,12 @@ export function providerSchema(type: ProviderType | undefined, taken: string[]) 
           code: 'custom',
           path: ['gcpProject'],
           message: 'Enter the Google Cloud project ID',
+        });
+      if (v.type === 'cloudflare' && v.cloudflareAccountId === '')
+        ctx.addIssue({
+          code: 'custom',
+          path: ['cloudflareAccountId'],
+          message: 'Enter your Cloudflare account ID',
         });
     });
 }
@@ -153,6 +162,8 @@ export function toProviderSpec(v: ProviderValues): ProviderSpec {
       project: v.gcpProject.trim(),
       ...(v.gcpLocation.trim() ? { location: v.gcpLocation.trim() } : {}),
     };
+  if (v.type === 'cloudflare')
+    spec.cloudflare = { account_id: v.cloudflareAccountId.trim() };
   return spec;
 }
 

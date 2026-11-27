@@ -25,7 +25,8 @@ use antirion_limits::money::{Dec, Nusd};
 use antirion_limits::usage::{Units, Usage};
 use antirion_providers::listing::{Fetched, Listed, Listing, TestMethod, TestRecord};
 use antirion_providers::{
-    DeploymentRt, ProviderRt, ProviderType, Publisher, UpstreamAuth, UpstreamCall, UpstreamOp,
+    DeploymentRt, Preset, ProviderRt, ProviderType, Publisher, UpstreamAuth, UpstreamCall,
+    UpstreamOp,
 };
 use axum::response::Response;
 use http::{HeaderValue, Method, StatusCode};
@@ -50,6 +51,8 @@ const LIST_MAX_AGE: Duration = Duration::from_secs(300);
 const VERTEX_PROBE_MODEL: &str = "gemini-2.5-flash";
 /// The model a minimal call uses on a Bedrock provider without a deployment.
 const BEDROCK_PROBE_MODEL: &str = "amazon.nova-micro-v1:0";
+/// Workers AI model for a connection test (OpenAI-compatible chat, no `GET /models`).
+const CLOUDFLARE_PROBE_MODEL: &str = "@cf/meta/llama-3.1-8b-instruct-fast";
 
 fn invalid(field: &str, code: DetailCode, message: &str) -> AdminError {
     AdminError::validation(vec![antirion_config::ConfigError::new(
@@ -239,7 +242,9 @@ fn probe(d: &DeploymentRt) -> (UpstreamOp<'static>, Option<Value>, bool) {
     let one_token =
         json!({"model": d.model, "max_tokens": 1, "messages": [{"role": "user", "content": ping}]});
     match d.provider.kind {
-        k if k.openai_family() && k != ProviderType::AzureOpenAi => (
+        k if k.openai_family()
+            && k != ProviderType::AzureOpenAi
+            && k != ProviderType::Preset(Preset::Cloudflare) => (
             UpstreamOp::OpenAi {
                 class: "models",
                 path: "/models",
@@ -450,6 +455,7 @@ fn probe_deployment(call: &Call, p: &Arc<ProviderRt>, saved: bool) -> Deployment
     }
     let model = match p.kind {
         ProviderType::Bedrock => BEDROCK_PROBE_MODEL,
+        ProviderType::Preset(Preset::Cloudflare) => CLOUDFLARE_PROBE_MODEL,
         _ => VERTEX_PROBE_MODEL,
     };
     DeploymentRt::direct(p, "", model, None)

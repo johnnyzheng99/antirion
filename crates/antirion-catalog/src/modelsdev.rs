@@ -38,6 +38,7 @@ pub const PROVIDERS: &[(&str, &str)] = &[
     ("cerebras", "cerebras"),
     ("deepinfra", "deepinfra"),
     ("perplexity", "perplexity"),
+    ("cloudflare", "cloudflare"),
 ];
 
 /// Prices in USD per million tokens, as decimal strings.

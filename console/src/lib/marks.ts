@@ -263,6 +263,7 @@ const PROVIDER_BRANDS: Record<string, BrandId> = {
   cerebras: 'cerebras',
   deepinfra: 'deepinfra',
   perplexity: 'perplexity',
+  cloudflare: 'cloudflare',
   huggingface: 'huggingface',
   replicate: 'replicate',
   sagemaker: 'aws',

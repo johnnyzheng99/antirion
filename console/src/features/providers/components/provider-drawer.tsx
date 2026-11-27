@@ -627,6 +627,15 @@ function SettingsFields({
           <Input mono value={draft.awsRegion} onChange={(e) => onChange({ awsRegion: e.target.value })} />
         </Field>
       ) : null}
+      {TYPE_BLOCKS.cloudflare(type) ? (
+        <Field label="Account ID" required error={errors.cloudflareAccountId} hint="Your Cloudflare account ID.">
+          <Input
+            mono
+            value={draft.cloudflareAccountId}
+            onChange={(e) => onChange({ cloudflareAccountId: e.target.value })}
+          />
+        </Field>
+      ) : null}
       {TYPE_BLOCKS.gcp(type) ? (
         <>
           <Field label="Google Cloud project" required error={errors.gcpProject}>

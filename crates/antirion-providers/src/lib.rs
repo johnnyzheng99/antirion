@@ -164,6 +164,8 @@ pub struct ProviderRt {
     pub region: Option<String>,
     /// `gcp.project`.
     pub project: Option<String>,
+    /// `cloudflare.account_id`.
+    pub account_id: Option<String>,
     /// `gcp.location`.
     pub location: String,
     /// `gemini.api_version`.

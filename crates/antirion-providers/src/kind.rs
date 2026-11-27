@@ -14,10 +14,11 @@ pub enum Preset {
     Cerebras,
     DeepInfra,
     Perplexity,
+    Cloudflare,
 }
 
 impl Preset {
-    const ALL: [Preset; 8] = [
+    const ALL: [Preset; 9] = [
         Preset::Groq,
         Preset::Together,
         Preset::Fireworks,
@@ -26,6 +27,7 @@ impl Preset {
         Preset::Cerebras,
         Preset::DeepInfra,
         Preset::Perplexity,
+        Preset::Cloudflare,
     ];
 
     fn as_str(self) -> &'static str {
@@ -38,6 +40,7 @@ impl Preset {
             Preset::Cerebras => "cerebras",
             Preset::DeepInfra => "deepinfra",
             Preset::Perplexity => "perplexity",
+            Preset::Cloudflare => "cloudflare",
         }
     }
 
@@ -51,6 +54,8 @@ impl Preset {
             Preset::Cerebras => "https://api.cerebras.ai/v1",
             Preset::DeepInfra => "https://api.deepinfra.com/v1/openai",
             Preset::Perplexity => "https://api.perplexity.ai",
+            // OpenAI-compatible routes live under `/ai/v1/…`; the account root is `/ai` (see Workers AI docs).
+            Preset::Cloudflare => "https://api.cloudflare.com/client/v4/accounts/{account_id}/ai",
         }
     }
 
@@ -73,7 +78,7 @@ impl Preset {
             Preset::Cerebras => &["vision", "n_multiple", "logprobs"][..],
             Preset::Groq => &["n_multiple"][..],
             Preset::Xai => &["n_multiple"][..],
-            Preset::Together | Preset::Fireworks | Preset::DeepInfra => &[][..],
+            Preset::Together | Preset::Fireworks | Preset::DeepInfra | Preset::Cloudflare => &[][..],
         };
         off.contains(&name).then_some(false)
     }
@@ -201,7 +206,7 @@ impl ProviderType {
     }
 
     /// Every provider type, in catalog order.
-    pub const ALL: [ProviderType; 18] = [
+    pub const ALL: [ProviderType; 19] = [
         ProviderType::OpenAi,
         ProviderType::AzureOpenAi,
         ProviderType::Anthropic,
@@ -220,6 +225,7 @@ impl ProviderType {
         ProviderType::Preset(Preset::Cerebras),
         ProviderType::Preset(Preset::DeepInfra),
         ProviderType::Preset(Preset::Perplexity),
+        ProviderType::Preset(Preset::Cloudflare),
     ];
 
     #[must_use]

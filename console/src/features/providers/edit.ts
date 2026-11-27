@@ -38,6 +38,7 @@ export interface SettingsDraft {
   awsRegion: string;
   gcpProject: string;
   gcpLocation: string;
+  cloudflareAccountId: string;
   geminiApiVersion: '' | 'v1beta' | 'v1';
   /** `capabilities.unrestricted`: every endpoint and feature, with no capability check. */
   unrestricted: boolean;
@@ -59,6 +60,7 @@ export const TYPE_BLOCKS = {
   aws: (t: string) => t === 'bedrock',
   gcp: (t: string) => t === 'vertex',
   gemini: (t: string) => t === 'gemini',
+  cloudflare: (t: string) => t === 'cloudflare',
 };
 
 /** Types whose API has no default address. */
@@ -126,6 +128,7 @@ export function fromProvider(p: ProviderResource): ProviderDraft {
       awsRegion: s.aws?.region ?? '',
       gcpProject: s.gcp?.project ?? '',
       gcpLocation: s.gcp?.location ?? '',
+      cloudflareAccountId: s.cloudflare?.account_id ?? '',
       geminiApiVersion: s.gemini?.api_version ?? '',
       unrestricted: unrestrictedOf(s),
     },
@@ -180,6 +183,8 @@ function settingsSpec(type: string, before: ProviderSpec, d: SettingsDraft): Rec
   if (TYPE_BLOCKS.gcp(type))
     block('gcp', { ...before.gcp, project: trimmed(d.gcpProject), location: trimmed(d.gcpLocation) });
   if (TYPE_BLOCKS.gemini(type)) block('gemini', { api_version: d.geminiApiVersion });
+  if (TYPE_BLOCKS.cloudflare(type))
+    block('cloudflare', { account_id: trimmed(d.cloudflareAccountId) });
   return out;
 }
 
@@ -195,6 +200,7 @@ const SETTINGS_KEYS = [
   'aws',
   'gcp',
   'gemini',
+  'cloudflare',
 ] as const;
 
 /** Whether the keys differ from what was saved (added, removed, renamed or reweighted). */
@@ -309,6 +315,8 @@ export function draftErrors(type: string, draft: ProviderDraft): FieldErrors {
     errors.awsRegion = 'Enter the AWS region, e.g. us-east-1';
   if (TYPE_BLOCKS.gcp(type) && s.gcpProject.trim() === '')
     errors.gcpProject = 'Enter the Google Cloud project ID';
+  if (TYPE_BLOCKS.cloudflare(type) && s.cloudflareAccountId.trim() === '')
+    errors.cloudflareAccountId = 'Enter your Cloudflare account ID';
   return errors;
 }
 
