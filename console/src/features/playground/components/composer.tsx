@@ -197,8 +197,9 @@ export function ComposerForm({
           <Textarea rows={10} mono value={value.decisionQuestions} onChange={(e) => set('decisionQuestions', e.target.value)} />
         </Field>
         <p className="text-caption text-muted">
-          Use deployment model <span className="mono text-fg">@cf/cloudflare/clef-flash</span> (or similar); the body
-          sends <span className="mono text-fg">clef-flash</span> as the selector when needed.
+          Choose <span className="mono text-fg">clef-flash</span> (Cloudflare Clef). Local chat servers such as{' '}
+          <span className="mono text-fg">aiserver2decision/jev</span> speak chat, not{' '}
+          <span className="mono text-fg">/v1/decisions</span>, unless you add that route on the server.
         </p>
       </div>
     );

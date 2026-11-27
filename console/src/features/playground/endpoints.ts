@@ -1,3 +1,5 @@
+import type { ModelView } from '@/features/models/types';
+
 /** Playground endpoint ids and their data-plane paths (kept in sync with `crates/antirion-admin/src/playground.rs`). */
 export type Endpoint =
   | 'chat_completions'
@@ -36,4 +38,30 @@ export function endpointUsesChatForm(endpoint: Endpoint): boolean {
 /** Whether the playground offers streaming for this endpoint. */
 export function endpointAllowsStream(endpoint: Endpoint): boolean {
   return endpointUsesChatForm(endpoint);
+}
+
+/** Whether a catalog model can answer `POST /v1/decisions` via Clef, System One, or a capable deployment. */
+export function modelEligibleForDecisions(view: ModelView): boolean {
+  if (/clef|systemone/i.test(view.name)) return true;
+  if (view.upstream.some((u) => /clef|systemone/i.test(u))) return true;
+  return view.providers.includes('cloudflare');
+}
+
+/** Models offered for the active endpoint (Decisions is not chat — local LLM routes lack `/v1/decisions`). */
+export function playgroundModelsForEndpoint(views: ModelView[], endpoint: Endpoint): ModelView[] {
+  if (endpoint !== 'decisions') return views;
+  const eligible = views.filter(modelEligibleForDecisions);
+  return eligible.length > 0 ? eligible : views;
+}
+
+/** Keeps the current model when it fits the endpoint; otherwise prefers `clef-flash`. */
+export function defaultModelForEndpoint(views: ModelView[], endpoint: Endpoint, current: string): string {
+  const list = playgroundModelsForEndpoint(views, endpoint);
+  const names = new Set(list.map((v) => v.name));
+  if (current && names.has(current)) return current;
+  const pick =
+    list.find((v) => v.enabled && v.name === 'clef-flash') ??
+    list.find((v) => v.enabled) ??
+    list[0];
+  return pick?.name ?? current;
 }

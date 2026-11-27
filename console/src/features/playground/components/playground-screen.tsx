@@ -32,6 +32,10 @@ import {
   type Composer,
   type Endpoint,
 } from '../body';
+import {
+  defaultModelForEndpoint,
+  playgroundModelsForEndpoint,
+} from '../endpoints';
 import { usePlaygroundDraft } from '../draft';
 import { useSend } from '../use-send';
 import { ComposerForm, Parameters } from './composer';
@@ -130,7 +134,9 @@ function Playground() {
   const loadCatalog = useCatalog((s) => s.loadCatalog);
   const views = useModelViews();
 
-  const fallbackModel = views.find((v) => v.enabled)?.name ?? views[0]?.name ?? '';
+  const endpointViews = playgroundModelsForEndpoint(views, editor.composer.endpoint);
+  const fallbackModel =
+    endpointViews.find((v) => v.enabled)?.name ?? endpointViews[0]?.name ?? views.find((v) => v.enabled)?.name ?? '';
   const composer: Composer = editor.composer.model
     ? editor.composer
     : { ...editor.composer, model: fallbackModel };
@@ -145,6 +151,13 @@ function Playground() {
       mode: m,
       json: m === 'json' && !e.jsonEdited ? pretty(buildBody(composer)) : e.json,
     }));
+
+  useEffect(() => {
+    if (editor.composer.endpoint !== 'decisions' || views.length === 0) return;
+    const next = defaultModelForEndpoint(views, 'decisions', editor.composer.model);
+    if (next === editor.composer.model) return;
+    setEditor((e) => ({ ...e, composer: { ...e.composer, model: next } }));
+  }, [editor.composer.endpoint, editor.composer.model, views]);
 
   useEffect(() => {
     if (started.current) return;
@@ -198,7 +211,7 @@ function Playground() {
 
   const modelOptions: SelectOption[] = useMemo(
     () =>
-      views.map((v) => {
+      playgroundModelsForEndpoint(views, composer.endpoint).map((v) => {
         return {
           value: v.name,
           label: v.name,
@@ -215,7 +228,7 @@ function Playground() {
           ...(v.enabled ? {} : { disabled: true }),
         };
       }),
-    [views],
+    [views, composer.endpoint],
   );
   const projectOptions: SelectOption[] = (projects ?? []).map((p) => ({
     value: p.name,
@@ -234,6 +247,7 @@ function Playground() {
     setComposer({
       ...composer,
       endpoint,
+      model: defaultModelForEndpoint(views, endpoint, composer.model),
       stream: endpointAllowsStream(endpoint),
       maxTokens: endpoint === 'messages' && !composer.maxTokens ? '1024' : composer.maxTokens,
     });
