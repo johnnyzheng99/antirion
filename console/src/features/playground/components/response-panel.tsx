@@ -248,6 +248,13 @@ export function ResponsePanel({ run, onContinue }: { run: Run | null; onContinue
 
 function Answer({ run, live }: { run: Run; live: boolean }) {
   const { answer } = run;
+  if (answer.rerankHits !== null) {
+    return (
+      <p className="text-ui text-fg">
+        {plural(answer.rerankHits, 'ranked result')}. See raw JSON for scores and documents.
+      </p>
+    );
+  }
   if (answer.vectors) {
     return (
       <div className="flex flex-col gap-2 text-ui text-fg">

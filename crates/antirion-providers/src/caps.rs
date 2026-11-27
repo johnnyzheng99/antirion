@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
-use crate::ProviderType;
+use crate::{Preset, ProviderType};
 
 /// A deployment's resolved capability flags: the deployment's own settings, then the provider's,
 /// then the type defaults.
@@ -332,11 +332,32 @@ fn default_operation(kind: ProviderType, class: &str) -> bool {
         // still answered from the local estimate rather than sent to a server that rarely has one.
         ProviderType::OpenAiCompatible => class != "count_tokens",
         ProviderType::Mistral => matches!(class, "generate" | "embed" | "custom"),
+        ProviderType::Preset(Preset::Cloudflare) => class != "count_tokens",
         ProviderType::Preset(p) => matches!(class, "generate" | "custom") || (class == "embed" && p.embeds()),
         ProviderType::Anthropic => matches!(class, "generate" | "count_tokens" | "files" | "batches"),
         ProviderType::AnthropicCompatible => matches!(class, "generate" | "count_tokens"),
         ProviderType::Cohere => matches!(class, "generate" | "embed" | "rerank"),
         ProviderType::Bedrock => matches!(class, "generate" | "embed" | "rerank" | "count_tokens"),
         ProviderType::Vertex | ProviderType::Gemini => matches!(class, "generate" | "embed" | "count_tokens"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn cloudflare_serves_openai_compatible_operations() {
+        let caps = Capabilities::resolve(ProviderType::Preset(Preset::Cloudflare), None, None);
+        assert!(caps.operation("generate"));
+        assert!(caps.operation("decide"));
+        assert!(caps.operation("embed"));
+        assert!(caps.operation("speech"));
+        assert!(caps.operation("transcribe"));
+        assert!(caps.operation("rerank"));
+        assert!(!caps.operation("count_tokens"));
+        assert!(caps.speaks("openai_generic"));
     }
 }

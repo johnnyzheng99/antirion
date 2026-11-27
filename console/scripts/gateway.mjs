@@ -26,7 +26,7 @@ if (!process.env.ANTIRION_PUBLIC_ORIGIN) {
 const consoleDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const child = spawn(process.execPath, [join(consoleDir, 'tests/e2e/start-gateway.mjs')], {
   stdio: 'inherit',
-  env: process.env,
+  env: { ...process.env, ANTIRION_E2E_FRESH: '0' },
 });
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => child.kill(signal));
 child.on('exit', (code) => process.exit(code ?? 0));

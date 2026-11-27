@@ -298,6 +298,19 @@ impl ProviderType {
                 &["api_key"],
             ),
             ProviderType::Cohere => (self.default_base_url(), &["cohere_chat"], &["api_key"]),
+            ProviderType::Preset(Preset::Cloudflare) => (
+                self.default_base_url(),
+                &[
+                    "openai_chat",
+                    "openai_completions",
+                    "openai_embeddings",
+                    "openai_audio",
+                    "openai_moderations",
+                    "openai_generic",
+                    "rerank",
+                ],
+                &["api_key"],
+            ),
             ProviderType::Preset(p) if p.embeds() => (
                 self.default_base_url(),
                 &["openai_chat", "openai_embeddings"],

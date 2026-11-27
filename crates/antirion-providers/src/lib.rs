@@ -12,6 +12,7 @@
 )]
 
 mod anthropic;
+pub mod cloudflare;
 mod body_edit;
 mod caps;
 mod compile;
@@ -36,6 +37,7 @@ use http::{HeaderMap, HeaderName, HeaderValue};
 
 pub use crate::anthropic::{merge_betas, split_betas};
 pub use crate::caps::{Capabilities, FLAGS, OPERATIONS, Source};
+pub use crate::cloudflare::{peel_envelope, workers_ai_run_class};
 pub use crate::compile::compile;
 pub use crate::creds::{AssumeRole, AzureSource, CredError, Credentials, GcpSource, TokenSource};
 pub use crate::kind::{Preset, ProviderType, TypeCatalog};

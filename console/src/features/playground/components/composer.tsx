@@ -1,11 +1,14 @@
 'use client';
 
+import { type KeyboardEvent } from 'react';
+
 import { Button, IconButton } from '@/components/ui/button';
 import { Switch } from '@/components/ui/choice';
 import { Field, NumberInput, Segmented, Textarea } from '@/components/ui/form';
 import { Icon } from '@/components/ui/icon';
 import { cn } from '@/lib/cn';
 
+import { endpointUsesChatForm } from '../body';
 import type { Composer, Role, Turn } from '../body';
 
 type Errors = Partial<Record<keyof Composer, string>>;
@@ -71,6 +74,12 @@ export function ComposerForm({
   onSubmit: () => void;
 }) {
   const set = <K extends keyof Composer>(key: K, v: Composer[K]) => onChange({ ...value, [key]: v });
+  const submitOnModEnter = (e: KeyboardEvent) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      onSubmit();
+    }
+  };
   if (value.endpoint === 'embeddings') {
     return (
       <Field label="Input" hint="One text per line; each gets its own vector." error={errors.input}>
@@ -79,14 +88,119 @@ export function ComposerForm({
           value={value.input}
           placeholder="Text to embed"
           onChange={(e) => set('input', e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-              e.preventDefault();
-              onSubmit();
-            }
-          }}
+          onKeyDown={submitOnModEnter}
         />
       </Field>
+    );
+  }
+  if (value.endpoint === 'speech') {
+    return (
+      <div className="flex flex-col gap-4">
+        <Field label="Text to speak" error={errors.speechInput}>
+          <Textarea
+            rows={4}
+            value={value.speechInput}
+            placeholder="Write the line you want synthesised"
+            onChange={(e) => set('speechInput', e.target.value)}
+            onKeyDown={submitOnModEnter}
+          />
+        </Field>
+        <Field label="Voice" hint="Provider voice id (e.g. alloy)." error={errors.voice}>
+          <input
+            className="mono w-full rounded-control border border-line bg-surface px-3 py-2 text-ui text-fg"
+            value={value.voice}
+            onChange={(e) => set('voice', e.target.value)}
+          />
+        </Field>
+      </div>
+    );
+  }
+  if (value.endpoint === 'transcriptions') {
+    return (
+      <Field
+        label="Audio file"
+        hint="Sent as multipart/form-data through the gateway."
+        error={errors.audioFileBase64}
+      >
+        <div>
+          <input
+            type="file"
+            accept="audio/*,video/*"
+            className="text-ui text-fg file:mr-3 file:rounded-control file:border-0 file:bg-raised file:px-3 file:py-1.5 file:text-ui"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (!file) {
+                set('audioFileName', '');
+                set('audioFileBase64', '');
+                return;
+              }
+              const reader = new FileReader();
+              reader.onload = () => {
+                const raw = typeof reader.result === 'string' ? reader.result : '';
+                const base64 = raw.includes(',') ? (raw.split(',')[1] ?? '') : raw;
+                onChange({ ...value, audioFileName: file.name, audioFileBase64: base64 });
+              };
+              reader.readAsDataURL(file);
+            }}
+          />
+          {value.audioFileName ? (
+            <p className="mt-1.5 text-caption text-muted">
+              Selected <span className="mono text-fg">{value.audioFileName}</span>
+            </p>
+          ) : null}
+        </div>
+      </Field>
+    );
+  }
+  if (value.endpoint === 'rerank') {
+    return (
+      <div className="flex flex-col gap-4">
+        <Field label="Query" error={errors.rerankQuery}>
+          <Textarea
+            rows={2}
+            value={value.rerankQuery}
+            placeholder="What should the documents be ranked against?"
+            onChange={(e) => set('rerankQuery', e.target.value)}
+            onKeyDown={submitOnModEnter}
+          />
+        </Field>
+        <Field label="Documents" hint="One passage per line." error={errors.rerankDocuments}>
+          <Textarea
+            rows={6}
+            value={value.rerankDocuments}
+            placeholder="First document&#10;Second document"
+            onChange={(e) => set('rerankDocuments', e.target.value)}
+          />
+        </Field>
+        <Field label="Top N" optional hint="How many hits to return.">
+          <NumberInput value={value.rerankTopN} onChange={(v) => set('rerankTopN', v)} min={1} step={1} />
+        </Field>
+      </div>
+    );
+  }
+  if (value.endpoint === 'decisions') {
+    return (
+      <div className="flex flex-col gap-4">
+        <Field
+          label="State"
+          hint="Plain text or JSON — the situation to evaluate (Clef / System One)."
+          error={errors.decisionState}
+        >
+          <Textarea
+            rows={4}
+            value={value.decisionState}
+            onChange={(e) => set('decisionState', e.target.value)}
+            onKeyDown={submitOnModEnter}
+          />
+        </Field>
+        <Field label="Questions" hint="JSON map of question ids to typed questions." error={errors.decisionQuestions}>
+          <Textarea rows={10} mono value={value.decisionQuestions} onChange={(e) => set('decisionQuestions', e.target.value)} />
+        </Field>
+        <p className="text-caption text-muted">
+          Use deployment model <span className="mono text-fg">@cf/cloudflare/clef-flash</span> (or similar); the body
+          sends <span className="mono text-fg">clef-flash</span> as the selector when needed.
+        </p>
+      </div>
     );
   }
   const turns = value.turns;
@@ -162,7 +276,7 @@ export function Parameters({
   errors: Errors;
 }) {
   const set = <K extends keyof Composer>(key: K, v: Composer[K]) => onChange({ ...value, [key]: v });
-  if (value.endpoint === 'embeddings') return null;
+  if (!endpointUsesChatForm(value.endpoint)) return null;
   return (
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">

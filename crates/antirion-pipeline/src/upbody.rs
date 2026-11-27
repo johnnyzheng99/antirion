@@ -5,7 +5,10 @@ use antirion_core::Stage;
 use antirion_egress::Payload;
 use antirion_error::{GatewayError, Message};
 use antirion_json::Splice;
-use antirion_providers::{ClientAnthropic, DeploymentRt, split_betas};
+use antirion_providers::{ClientAnthropic, DeploymentRt, Preset, ProviderType, split_betas};
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
+use serde_json::json;
 use bytes::Bytes;
 use http::HeaderValue;
 use serde_json::Value;
@@ -197,14 +200,65 @@ pub(crate) async fn upstream_body(
             (Cell::Identity, _) => Ok((raw.clone().into(), json_type, None)),
         },
         Parsed::Multipart { raw, form, rest, .. } => {
-            let body = multipart_body(plan, raw, form, d);
-            let body = match rest {
-                Some(r) => body.with_tail(r.tail()),
-                None => body,
-            };
-            Ok((body, plan.client_content_type.clone(), None))
+            if cloudflare_whisper(plan, d) {
+                let body = cloudflare_whisper_json(raw, form)?;
+                Ok((body, Some(HeaderValue::from_static("application/json")), None))
+            } else {
+                let body = multipart_body(plan, raw, form, d);
+                let body = match rest {
+                    Some(r) => body.with_tail(r.tail()),
+                    None => body,
+                };
+                Ok((body, plan.client_content_type.clone(), None))
+            }
         }
     }
+}
+
+fn cloudflare_whisper(plan: &Plan<'_>, d: &DeploymentRt) -> bool {
+    matches!(d.provider.kind, ProviderType::Preset(Preset::Cloudflare))
+        && matches!(
+            plan.endpoint.upstream_path,
+            Some(
+                "/audio/transcriptions"
+                    | "/audio/transcriptions/details"
+                    | "/audio/translations"
+            )
+        )
+}
+
+fn cloudflare_whisper_json(
+    raw: &Bytes,
+    form: &antirion_wire::multipart::Form,
+) -> Result<Payload, GatewayError> {
+    let file = ["file", "audio"]
+        .into_iter()
+        .find_map(|name| {
+            form.parts()
+                .iter()
+                .find(|p| p.name.as_deref() == Some(name))
+        })
+        .or_else(|| form.parts().first());
+    let Some(part) = file else {
+        return Err(GatewayError::with_reason(
+            crate::reasons::UNTRANSLATABLE_REQUEST,
+            Stage::Attempt,
+            Message::Fixed("The multipart body must include an audio file."),
+        ));
+    };
+    let audio = raw.get(part.value.clone()).unwrap_or(&[]);
+  let mut o = serde_json::Map::new();
+    o.insert("audio".into(), json!(STANDARD.encode(audio)));
+    if let Some(lang) = form_part_text(raw, form, "language") {
+        o.insert("source_lang".into(), json!(lang));
+    }
+    Ok(Payload::from(serde_json::to_vec(&Value::Object(o)).unwrap_or_default()))
+}
+
+fn form_part_text(raw: &Bytes, form: &antirion_wire::multipart::Form, name: &str) -> Option<String> {
+    let part = form.parts().iter().find(|p| p.name.as_deref() == Some(name))?;
+    let bytes = raw.get(part.value.clone())?;
+    String::from_utf8(bytes.to_vec()).ok()
 }
 
 /// A multipart body with its `model` part's value replaced by the upstream id, sharing the

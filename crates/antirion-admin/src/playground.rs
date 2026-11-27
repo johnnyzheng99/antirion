@@ -5,6 +5,7 @@
 //! send asked for as `text/event-stream` is relayed as it arrives, after one `playground` event
 //! that carries what the buffered answer would (status, decision headers, log id, key).
 
+use base64::Engine;
 use antirion_core::UtcMicros;
 use antirion_core::audit::Outcome;
 use antirion_identity::{Credential, Plane};
@@ -59,7 +60,14 @@ const ENDPOINTS: &[(&str, &str)] = &[
     ("responses", "/v1/responses"),
     ("messages", "/v1/messages"),
     ("embeddings", "/v1/embeddings"),
+    ("speech", "/v1/audio/speech"),
+    ("transcriptions", "/v1/audio/transcriptions"),
+    ("rerank", "/v1/rerank"),
+    ("decisions", "/v1/decisions"),
 ];
+
+/// Playground-only: a base64 audio file the admin API encodes as multipart for STT.
+const PLAYGROUND_FILE: &str = "_playground_file";
 
 fn path_of(endpoint: &str) -> Option<&'static str> {
     ENDPOINTS.iter().find(|(e, _)| *e == endpoint).map(|(_, p)| *p)
@@ -218,23 +226,22 @@ async fn send(
         )
     })?;
     let (key, secret) = key_for(call, project, &s).await?;
-    if let (Some(st), Some(o)) = (stream, body.as_object_mut()) {
-        o.insert("stream".into(), Value::Bool(st));
+    if stream == Some(true) && let Some(o) = body.as_object_mut() {
+        o.insert("stream".into(), Value::Bool(true));
     }
+    let (payload, content_type) = encode_body(path, body)?;
     let mut req = http::Request::builder()
         .method(Method::POST)
         .uri(path)
         .header(http::header::HOST, "localhost")
-        .header(http::header::CONTENT_TYPE, "application/json")
+        .header(http::header::CONTENT_TYPE, content_type)
         .header(http::header::AUTHORIZATION, format!("Bearer {secret}"))
         .header("anthropic-version", "2023-06-01")
         .header("x-request-id", call.request_id.as_str());
     if let Some(id) = replay_of {
         req = req.header(REPLAY_OF, id);
     }
-    let req = req
-        .body(Bytes::from(serde_json::to_vec(&body).unwrap_or_default()))
-        .map_err(|_| AdminError::internal())?;
+    let req = req.body(payload).map_err(|_| AdminError::internal())?;
     let resp = plane.send(req).await.map_err(|_| {
         AdminError::new(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -333,7 +340,8 @@ pub(crate) async fn playground_send(call: &Call) -> Result<Response, AdminError>
         .ok_or_else(|| AdminError::invalid_parameter("endpoint is required"))?;
     let path = path_of(endpoint).ok_or_else(|| {
         AdminError::invalid_parameter(
-            "endpoint must be one of chat_completions, responses, messages, embeddings",
+            "endpoint must be one of chat_completions, responses, messages, embeddings, speech, \
+             transcriptions, rerank, or decisions",
         )
     })?;
     let body = m
@@ -428,6 +436,95 @@ pub(crate) async fn replay(call: &Call, id: &str) -> Result<Response, AdminError
     send(call, &project, path, body, None, Some(id), false).await
 }
 
+fn encode_body(path: &str, body: Value) -> Result<(Bytes, HeaderValue), AdminError> {
+    if path == "/v1/audio/transcriptions" {
+        return multipart_transcriptions(body);
+    }
+    Ok((
+        Bytes::from(serde_json::to_vec(&body).unwrap_or_default()),
+        HeaderValue::from_static("application/json"),
+    ))
+}
+
+fn multipart_transcriptions(body: Value) -> Result<(Bytes, HeaderValue), AdminError> {
+    let Some(obj) = body.as_object() else {
+        return Err(AdminError::invalid_parameter("body must be an object"));
+    };
+    let file = obj.get(PLAYGROUND_FILE).and_then(Value::as_object).ok_or_else(|| {
+        AdminError::invalid_parameter(format!("body must include {PLAYGROUND_FILE} for transcriptions"))
+    })?;
+    let data = file
+        .get("data")
+        .and_then(Value::as_str)
+        .ok_or_else(|| AdminError::invalid_parameter("transcriptions file data must be a base64 string"))?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data.trim())
+        .map_err(|_| AdminError::invalid_parameter("transcriptions file data is not valid base64"))?;
+    let field = file
+        .get("field")
+        .and_then(Value::as_str)
+        .unwrap_or("file");
+    let filename = file
+        .get("filename")
+        .and_then(Value::as_str)
+        .unwrap_or("audio.wav");
+    let boundary = format!("----AntirionPlayground{}", call_request_id_fragment());
+    let mut out = Vec::new();
+    for (key, value) in obj {
+        if key == PLAYGROUND_FILE {
+            continue;
+        }
+        let text = value_to_field(value)?;
+        push_field(&mut out, &boundary, key, &text, None);
+    }
+    push_field(&mut out, &boundary, field, "", Some((filename, &bytes)));
+    out.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+    let ct = HeaderValue::from_str(&format!("multipart/form-data; boundary={boundary}"))
+        .map_err(|_| AdminError::internal())?;
+    Ok((Bytes::from(out), ct))
+}
+
+fn call_request_id_fragment() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos().to_string())
+        .unwrap_or_else(|_| "0".into())
+}
+
+fn value_to_field(v: &Value) -> Result<String, AdminError> {
+    match v {
+        Value::String(s) => Ok(s.clone()),
+        Value::Number(n) => Ok(n.to_string()),
+        Value::Bool(b) => Ok(b.to_string()),
+        Value::Null => Ok(String::new()),
+        _ => serde_json::to_string(v).map_err(|_| AdminError::invalid_parameter("field value is not JSON text")),
+    }
+}
+
+fn push_field(
+    out: &mut Vec<u8>,
+    boundary: &str,
+    name: &str,
+    value: &str,
+    file: Option<(&str, &[u8])>,
+) {
+    out.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+    if let Some((filename, data)) = file {
+        out.extend_from_slice(
+            format!("Content-Disposition: form-data; name=\"{name}\"; filename=\"{filename}\"\r\n")
+                .as_bytes(),
+        );
+        out.extend_from_slice(b"Content-Type: application/octet-stream\r\n\r\n");
+        out.extend_from_slice(data);
+        out.extend_from_slice(b"\r\n");
+    } else {
+        out.extend_from_slice(format!("Content-Disposition: form-data; name=\"{name}\"\r\n\r\n").as_bytes());
+        out.extend_from_slice(value.as_bytes());
+        out.extend_from_slice(b"\r\n");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -444,6 +541,22 @@ mod tests {
             ]
         );
         assert_eq!(path_of("messages"), Some("/v1/messages"));
+        assert_eq!(path_of("decisions"), Some("/v1/decisions"));
         assert_eq!(path_of("images"), None);
+    }
+
+    #[test]
+    fn transcriptions_multipart_omits_the_playground_file_marker() {
+        let body = json!({
+            "model": "whisper",
+            PLAYGROUND_FILE: {"field": "file", "filename": "a.wav", "data": "YQ=="}
+        });
+        let (bytes, ct) = multipart_transcriptions(body).unwrap();
+        let text = String::from_utf8(bytes.to_vec()).unwrap();
+        assert!(text.contains("name=\"model\""));
+        assert!(text.contains("name=\"file\""));
+        assert!(text.contains("a"));
+        assert!(!text.contains(PLAYGROUND_FILE));
+        assert!(ct.to_str().unwrap().starts_with("multipart/form-data"));
     }
 }

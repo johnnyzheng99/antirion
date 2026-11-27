@@ -40,6 +40,10 @@ pub(crate) fn rerank_op(api: RerankApi) -> UpstreamOp<'static> {
     match api {
         RerankApi::Cohere => UpstreamOp::CohereRerank,
         RerankApi::Bedrock => UpstreamOp::BedrockRerank,
+        RerankApi::WorkersAi => UpstreamOp::OpenAi {
+            class: "rerank",
+            path: "/rerank",
+        },
         RerankApi::Compatible | RerankApi::TopK => UpstreamOp::OpenAi {
             class: "rerank",
             path: "/rerank",

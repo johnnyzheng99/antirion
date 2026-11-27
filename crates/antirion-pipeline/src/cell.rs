@@ -4,7 +4,7 @@
 use antirion_dialects::embed::EmbedApi;
 use antirion_dialects::rerank::RerankApi;
 use antirion_dialects::{Dialect, Endpoint, Kind};
-use antirion_providers::{DeploymentRt, Native, ProviderType, Publisher, UpstreamOp};
+use antirion_providers::{DeploymentRt, Native, Preset, ProviderType, Publisher, UpstreamOp};
 
 use crate::parse::Parsed;
 use crate::relay::ClientDialect;
@@ -66,6 +66,9 @@ fn embed_api(d: &DeploymentRt) -> Option<EmbedApi> {
 fn rerank_api(d: &DeploymentRt) -> Option<RerankApi> {
     let caps = &d.capabilities;
     match d.provider.kind {
+        ProviderType::Preset(Preset::Cloudflare) if caps.operation("rerank") => {
+            Some(RerankApi::WorkersAi)
+        }
         ProviderType::Cohere if caps.operation("rerank") => Some(RerankApi::Cohere),
         ProviderType::Bedrock if caps.operation("rerank") => Some(RerankApi::Bedrock),
         k if k.openai_family()

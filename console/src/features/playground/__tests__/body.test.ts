@@ -52,6 +52,31 @@ describe('playground bodies', () => {
       model: 'm',
       input: ['a', 'b'],
     });
+    expect(buildBody({ ...c, endpoint: 'speech', speechInput: 'hi', voice: 'alloy' })).toEqual({
+      model: 'm',
+      input: 'hi',
+      voice: 'alloy',
+    });
+    expect(
+      buildBody({
+        ...c,
+        endpoint: 'rerank',
+        rerankQuery: 'q',
+        rerankDocuments: 'a\nb',
+        rerankTopN: '2',
+      }),
+    ).toEqual({ model: 'm', query: 'q', documents: ['a', 'b'], top_n: 2 });
+    expect(
+      buildBody({
+        ...emptyComposer('decisions', '@cf/cloudflare/clef-flash'),
+        decisionState: 'x',
+        decisionQuestions: '{"urgent":{"type":"noul","instructions":"?"}}',
+      }),
+    ).toEqual({
+      model: 'clef-flash',
+      state: 'x',
+      questions: { urgent: { type: 'noul', instructions: '?' } },
+    });
   });
 
   it('checks the form before sending', () => {
@@ -72,6 +97,7 @@ describe('playground bodies', () => {
     expect(parseBody('chat_completions', tools).exact).toBe(false);
     expect(endpointOfPath('/v1/messages')).toBe('messages');
     expect(endpointOfPath('/v1/images/generations')).toBeNull();
+    expect(endpointOfPath('/v1/decisions')).toBe('decisions');
   });
 
   it('splits an event stream across reads', () => {

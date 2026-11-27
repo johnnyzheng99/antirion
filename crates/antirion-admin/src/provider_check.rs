@@ -884,6 +884,47 @@ mod tests {
     use super::*;
 
     #[test]
+    fn cloudflare_probe_uses_chat_completions_not_run() {
+        let doc = json!({
+            "providers": {"p": {"type": "cloudflare", "cloudflare": {"account_id": "acct"},
+                           "auth": {"api_key": "k"}}}
+        });
+        let table = antirion_providers::compile(&doc).unwrap();
+        let p = table.providers.get("p").expect("provider");
+        let d = antirion_providers::DeploymentRt::direct(p, "", CLOUDFLARE_PROBE_MODEL, None);
+        let (op, body, completion) = probe(&d);
+        assert!(completion);
+        assert!(body.is_some());
+        let UpstreamOp::OpenAi { path, .. } = op else {
+            panic!("expected OpenAI chat completion probe");
+        };
+        assert_eq!(path, "/chat/completions");
+        let rid = RequestId::generate();
+        let req = d
+            .build_request(UpstreamCall {
+                op,
+                stream: false,
+                body: antirion_egress::Payload::from(
+                    serde_json::to_vec(body.as_ref().unwrap()).unwrap_or_default(),
+                ),
+                content_type: Some(HeaderValue::from_static("application/json")),
+                request_id: &rid,
+                response_timeout: TIMEOUT,
+                connect_timeout: None,
+                anthropic: None,
+                key: None,
+                byok: None,
+            })
+            .unwrap()
+            .request;
+        assert!(
+            req.uri.to_string().contains("/ai/v1/chat/completions"),
+            "connection test must hit OpenAI-compatible chat, got {}",
+            req.uri
+        );
+    }
+
+    #[test]
     fn secret_forms_are_found_anywhere_in_a_spec() {
         assert_eq!(
             secret_forms(&json!({"auth": {"api_key": "${env:KEY}"}})),

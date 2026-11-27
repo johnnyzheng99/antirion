@@ -13,8 +13,11 @@ const data = Number(process.env.ANTIRION_E2E_DATA_PORT ?? 20480);
 const admin = Number(process.env.ANTIRION_E2E_ADMIN_PORT ?? 20481);
 const publicOrigin = process.env.ANTIRION_PUBLIC_ORIGIN?.trim();
 
-rmSync(join(dir, 'data'), { recursive: true, force: true });
-mkdirSync(dir, { recursive: true });
+// E2e wants a clean slate each run; `console/scripts/gateway.mjs` sets ANTIRION_E2E_FRESH=0 to keep dev data.
+if (process.env.ANTIRION_E2E_FRESH !== '0') {
+  rmSync(join(dir, 'data'), { recursive: true, force: true });
+}
+mkdirSync(join(dir, 'data'), { recursive: true });
 const config = join(dir, 'gateway.yaml');
 writeFileSync(
   config,

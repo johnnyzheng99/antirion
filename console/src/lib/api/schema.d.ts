@@ -5751,7 +5751,15 @@ export interface components {
         };
         PlaygroundSend: {
             project: string;
-            endpoint: "chat_completions" | "responses" | "messages" | "embeddings";
+            endpoint:
+              | "chat_completions"
+              | "responses"
+              | "messages"
+              | "embeddings"
+              | "speech"
+              | "transcriptions"
+              | "rerank"
+              | "decisions";
             body: Record<string, unknown>;
             stream?: boolean;
         };

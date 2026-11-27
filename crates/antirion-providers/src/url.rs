@@ -17,6 +17,30 @@ pub(crate) fn segment(model: &str) -> String {
     uri_encode(model)
 }
 
+fn workers_ai_segment(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~' | b'@') {
+            out.push(char::from(b));
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// Workers AI `POST .../ai/run/{model}`: keep `/` and `@` as Cloudflare routes them; encode other bytes per segment.
+pub(crate) fn workers_ai_model_path(model: &str) -> String {
+    if model.is_empty() {
+        return String::new();
+    }
+    model
+        .split('/')
+        .map(workers_ai_segment)
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 /// `base` (scheme, host, path; its query kept) + `path` + the operation's `query`, which replaces
 /// same-named base parameters.
 pub(crate) fn join(base: &str, path: &str, query: &[(&str, &str)]) -> String {
@@ -62,6 +86,14 @@ mod tests {
         );
         assert_eq!(segment("anthropic.claude-v1:0"), "anthropic.claude-v1%3A0");
         assert_eq!(segment("arn:aws:x/y"), "arn%3Aaws%3Ax%2Fy");
+        assert_eq!(
+            workers_ai_model_path("@cf/cloudflare/clef-flash"),
+            "@cf/cloudflare/clef-flash"
+        );
+        assert_eq!(
+            workers_ai_model_path("@cf/meta/llama-3.1-8b-instruct"),
+            "@cf/meta/llama-3.1-8b-instruct"
+        );
         assert_eq!(
             fill(
                 "https://bedrock-runtime.{region}.amazonaws.com",

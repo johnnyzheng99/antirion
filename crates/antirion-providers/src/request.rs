@@ -16,7 +16,8 @@ use crate::anthropic::{Platform, filter, merge_betas};
 use crate::body_edit::BodyEdit;
 use crate::creds::{CredError, Credentials, TokenSource};
 use crate::params::Applied;
-use crate::url::{fill, join, segment};
+use crate::cloudflare::workers_ai_run_class;
+use crate::url::{fill, join, segment, workers_ai_model_path};
 use crate::{BuildError, DeploymentRt, Preset, ProviderType, UpstreamAuth, sigv4};
 
 /// What the upstream is asked to do.
@@ -244,13 +245,33 @@ impl DeploymentRt {
         }
     }
 
+    fn operation_path_template<'a>(&self, op: UpstreamOp<'_>, over: &'a str) -> &'a str {
+        if matches!(self.provider.kind, ProviderType::Preset(Preset::Cloudflare))
+            && matches!(op, UpstreamOp::OpenAi { class, .. } if workers_ai_run_class(class))
+        {
+            "/run/{model}"
+        } else {
+            over
+        }
+    }
+
+    fn upstream_path_model(&self, op: UpstreamOp<'_>) -> String {
+        if matches!(self.provider.kind, ProviderType::Preset(Preset::Cloudflare))
+            && matches!(op, UpstreamOp::OpenAi { class, .. } if workers_ai_run_class(class))
+        {
+            workers_ai_model_path(&self.model)
+        } else {
+            segment(&self.model)
+        }
+    }
+
     /// The path and the operation's query parameters.
     fn path(&self, op: UpstreamOp<'_>, stream: bool) -> Result<(String, Query), BuildError> {
         let p = &self.provider;
-        let model = segment(&self.model);
+        let model = self.upstream_path_model(op);
         if let Some(over) = p.operations.get(op.class()) {
             let path = fill(
-                over,
+                self.operation_path_template(op, over),
                 &[
                     ("model", &model),
                     ("project", p.project.as_deref().unwrap_or_default()),
@@ -279,7 +300,12 @@ impl DeploymentRt {
                 },
             ) => ("/openai/v1/chat/completions".to_owned(), Vec::new()),
             (ProviderType::Bedrock, UpstreamOp::OpenAi { .. }) => return Err(BuildError::Unsupported),
-            (ProviderType::Preset(Preset::Cloudflare), UpstreamOp::OpenAi { path, .. }) => {
+            (ProviderType::Preset(Preset::Cloudflare), UpstreamOp::OpenAi { class, path, .. }) => {
+                // Native Workers AI models (Clef, reranker, Whisper, Aura, …) use `/run/{model}`;
+                // chat and embeddings stay on `/v1/...` per Cloudflare's OpenAI-compatible surface.
+                if workers_ai_run_class(class) {
+                    return Ok((format!("/run/{model}"), Vec::new()));
+                }
                 let path = if path.starts_with("/v1/") || path == "/v1" {
                     path.to_owned()
                 } else {
@@ -477,6 +503,25 @@ impl DeploymentRt {
             ) => e.remove("model"),
             (ProviderType::AzureOpenAi, UpstreamOp::OpenAi { .. }) if p.azure_deployments.is_some() => {
                 e.remove("model");
+            }
+            (ProviderType::Preset(Preset::Cloudflare), UpstreamOp::OpenAi { class, .. })
+                if workers_ai_run_class(class) =>
+            {
+                e.remove("model");
+                e.remove("stream");
+                e.remove("stream_options");
+                if class == "speech" {
+                    if let Some(input) = e.value("input").as_ref().and_then(Value::as_str) {
+                        e.set("text", &Value::from(input));
+                    }
+                    if let Some(voice) = e.value("voice").as_ref().and_then(Value::as_str) {
+                        e.set("speaker", &Value::from(voice));
+                    }
+                    e.remove("input");
+                    e.remove("voice");
+                    e.remove("response_format");
+                    e.remove("speed");
+                }
             }
             _ => {}
         }
@@ -707,6 +752,181 @@ mod tests {
             r.uri.to_string(),
             "https://api.cloudflare.com/client/v4/accounts/acct/ai/v1/chat/completions"
         );
+    }
+
+    #[test]
+    fn cloudflare_rerank_uses_workers_ai_run() {
+        let t = table(json!({
+            "providers": {"p": {"type": "cloudflare", "cloudflare": {"account_id": "acct"},
+                           "auth": {"api_key": "k"}}},
+            "deployments": {"d": {"provider": "p", "model": "@cf/baai/bge-reranker-base"}}
+        }));
+        let rid = RequestId::generate();
+        let r = t.deployments["d"]
+            .build_request(call(
+                UpstreamOp::OpenAi {
+                    class: "rerank",
+                    path: "/rerank",
+                },
+                false,
+                b"{}",
+                &rid,
+            ))
+            .unwrap()
+            .request;
+        assert_eq!(
+            r.uri.to_string(),
+            "https://api.cloudflare.com/client/v4/accounts/acct/ai/run/@cf/baai/bge-reranker-base"
+        );
+    }
+
+    #[test]
+    fn cloudflare_decide_ignores_openai_operation_override() {
+        let t = table(json!({
+            "providers": {"p": {"type": "cloudflare", "cloudflare": {"account_id": "acct"},
+                           "auth": {"api_key": "k"},
+                           "operations": {"decide": {"path": "/v1/decisions"}}}},
+            "deployments": {"d": {"provider": "p", "model": "@cf/cloudflare/clef-flash"}}
+        }));
+        let rid = RequestId::generate();
+        let r = t.deployments["d"]
+            .build_request(call(
+                UpstreamOp::OpenAi {
+                    class: "decide",
+                    path: "/decisions",
+                },
+                false,
+                b"{}",
+                &rid,
+            ))
+            .unwrap()
+            .request;
+        assert!(
+            r.uri.to_string().contains("/ai/run/"),
+            "expected Workers AI run URI, got {}",
+            r.uri
+        );
+    }
+
+    #[test]
+    fn openai_decide_keeps_decisions_path() {
+        let t = table(json!({
+            "providers": {"p": {"type": "openai", "auth": {"api_key": "k"}}},
+            "deployments": {"d": {"provider": "p", "model": "jev"}}
+        }));
+        let rid = RequestId::generate();
+        let r = t.deployments["d"]
+            .build_request(call(
+                UpstreamOp::OpenAi {
+                    class: "decide",
+                    path: "/decisions",
+                },
+                false,
+                b"{}",
+                &rid,
+            ))
+            .unwrap()
+            .request;
+        assert!(r.uri.to_string().ends_with("/decisions"));
+    }
+
+    #[test]
+    fn openai_rerank_keeps_rerank_path() {
+        let t = table(json!({
+            "providers": {"p": {"type": "openai_compatible", "base_url": "http://h/v1", "auth": {"api_key": "k"}}},
+            "deployments": {"d": {"provider": "p", "model": "rerank"}}
+        }));
+        let rid = RequestId::generate();
+        let r = t.deployments["d"]
+            .build_request(call(
+                UpstreamOp::OpenAi {
+                    class: "rerank",
+                    path: "/rerank",
+                },
+                false,
+                b"{}",
+                &rid,
+            ))
+            .unwrap()
+            .request;
+        assert!(r.uri.to_string().ends_with("/rerank"));
+    }
+
+    #[test]
+    fn cloudflare_probe_style_chat_uses_v1() {
+        let t = table(json!({
+            "providers": {"p": {"type": "cloudflare", "cloudflare": {"account_id": "acct"},
+                           "auth": {"api_key": "k"}}},
+            "deployments": {"d": {"provider": "p", "model": "@cf/meta/llama-3.1-8b-instruct-fast"}}
+        }));
+        let rid = RequestId::generate();
+        let r = t.deployments["d"]
+            .build_request(call(
+                UpstreamOp::OpenAi {
+                    class: "generate",
+                    path: "/chat/completions",
+                },
+                false,
+                br#"{"messages":[{"role":"user","content":"ping"}]}"#,
+                &rid,
+            ))
+            .unwrap()
+            .request;
+        assert_eq!(
+            r.uri.to_string(),
+            "https://api.cloudflare.com/client/v4/accounts/acct/ai/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn cloudflare_decide_uses_workers_ai_run() {
+        let t = table(json!({
+            "providers": {"p": {"type": "cloudflare", "cloudflare": {"account_id": "acct"},
+                           "auth": {"api_key": "k"}}},
+            "deployments": {"d": {"provider": "p", "model": "@cf/cloudflare/clef-flash"}}
+        }));
+        let rid = RequestId::generate();
+        let r = t.deployments["d"]
+            .build_request(call(
+                UpstreamOp::OpenAi {
+                    class: "decide",
+                    path: "/decisions",
+                },
+                false,
+                b"{}",
+                &rid,
+            ))
+            .unwrap()
+            .request;
+        assert_eq!(
+            r.uri.to_string(),
+            "https://api.cloudflare.com/client/v4/accounts/acct/ai/run/@cf/cloudflare/clef-flash"
+        );
+    }
+
+    #[test]
+    fn cloudflare_decide_strips_stream() {
+        let t = table(json!({
+            "providers": {"p": {"type": "cloudflare", "cloudflare": {"account_id": "acct"},
+                           "auth": {"api_key": "k"}}},
+            "deployments": {"d": {"provider": "p", "model": "@cf/cloudflare/clef-flash"}}
+        }));
+        let rid = RequestId::generate();
+        let r = t.deployments["d"]
+            .build_request(call(
+                UpstreamOp::OpenAi {
+                    class: "decide",
+                    path: "/decisions",
+                },
+                false,
+                br#"{"stream":false,"questions":[],"state":{}}"#,
+                &rid,
+            ))
+            .unwrap()
+            .request;
+        let body: Value = serde_json::from_slice(&r.body.contiguous()).unwrap();
+        assert!(body.get("stream").is_none());
+        assert!(body.get("stream_options").is_none());
     }
 
     #[test]

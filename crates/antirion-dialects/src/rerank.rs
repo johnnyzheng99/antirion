@@ -17,6 +17,8 @@ pub enum RerankApi {
     TopK,
     /// Bedrock's agent runtime `Rerank`.
     Bedrock,
+    /// Cloudflare Workers AI `POST .../ai/run/{model}` with `query` and `contexts`.
+    WorkersAi,
 }
 
 /// A rerank request as the codecs read it (the body passed validation).
@@ -104,6 +106,20 @@ pub fn encode(api: RerankApi, r: &RerankRequest, model: &str, region: &str) -> V
             }
             Value::Object(o)
         }
+        RerankApi::WorkersAi => {
+            let contexts: Vec<Value> = r
+                .documents
+                .iter()
+                .map(|d| json!({"text": document_text(d)}))
+                .collect();
+            let mut o = Map::new();
+            o.insert("query".into(), Value::from(r.query.as_str()));
+            o.insert("contexts".into(), Value::from(contexts));
+            if let Some(n) = r.top_n {
+                o.insert("top_k".into(), Value::from(n));
+            }
+            Value::Object(o)
+        }
         RerankApi::Bedrock => {
             let sources: Vec<Value> = texts
                 .iter()
@@ -132,6 +148,28 @@ pub fn encode(api: RerankApi, r: &RerankRequest, model: &str, region: &str) -> V
     }
 }
 
+fn decode_scored_list(list: &[Value], score_key: &str, documents: usize) -> Option<Vec<Scored>> {
+    let mut results = Vec::with_capacity(list.len());
+    for (pos, item) in list.iter().enumerate() {
+        let index = item
+            .get("index")
+            .or_else(|| item.get("id"))
+            .and_then(Value::as_u64)
+            .and_then(|n| usize::try_from(n).ok())
+            .unwrap_or(pos);
+        if index >= documents {
+            return None;
+        }
+        let score = item
+            .get(score_key)
+            .or_else(|| item.get("relevance_score"))
+            .or_else(|| item.get("score"))
+            .and_then(Value::as_f64)?;
+        results.push(Scored { index, score });
+    }
+    Some(results)
+}
+
 /// One scored document.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Scored {
@@ -153,23 +191,61 @@ pub struct Ranked {
 
 /// Reads a provider answer. `None` when it has no results list, or a result names no valid index.
 #[must_use]
+fn workers_ai_peel(v: &Value) -> &Value {
+    let Some(result) = v.get("result") else {
+        return v;
+    };
+    if v.get("success").and_then(Value::as_bool) == Some(false) {
+        return v;
+    }
+    result
+}
+
 pub fn decode_answer(api: RerankApi, v: &Value, documents: usize) -> Option<Ranked> {
     let (list, score_key) = match api {
+        RerankApi::WorkersAi => {
+            let inner = workers_ai_peel(v);
+            if let Some(scores) = inner.as_array() {
+                if scores.iter().all(Value::is_number) && scores.len() <= documents {
+                    let results: Vec<Scored> = scores
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, s)| {
+                            Some(Scored {
+                                index: i,
+                                score: s.as_f64()?,
+                            })
+                        })
+                        .collect();
+                    return Some(Ranked {
+                        results,
+                        tokens: None,
+                        id: None,
+                        meta: None,
+                    });
+                }
+            }
+            let list = inner
+                .get("response")
+                .and_then(Value::as_array)
+                .or_else(|| inner.get("results").and_then(Value::as_array))
+                .or_else(|| {
+                    inner.as_array().filter(|a| a.iter().all(|x| x.is_object()))
+                })?;
+            return decode_scored_list(list, "score", documents).map(|results| Ranked {
+                results,
+                tokens: None,
+                id: None,
+                meta: None,
+            });
+        }
         RerankApi::Bedrock => (v.get("results")?.as_array()?, "relevanceScore"),
         _ => match v.get("results").or_else(|| v.get("data")) {
             Some(Value::Array(l)) => (l, "relevance_score"),
             _ => return None,
         },
     };
-    let mut results = Vec::with_capacity(list.len());
-    for item in list {
-        let index = usize::try_from(item.get("index")?.as_u64()?).ok()?;
-        if index >= documents {
-            return None;
-        }
-        let score = item.get(score_key)?.as_f64()?;
-        results.push(Scored { index, score });
-    }
+    let results = decode_scored_list(list, score_key, documents)?;
     let tokens = v
         .pointer("/usage/total_tokens")
         .or_else(|| v.pointer("/meta/billed_units/input_tokens"))
@@ -243,6 +319,11 @@ mod tests {
         assert_eq!(c["documents"], json!(["a", "b", "{\"title\":\"c\"}"]));
         assert_eq!(c["top_n"], 2);
         assert_eq!(encode(RerankApi::TopK, &r, "m", "")["top_k"], 2);
+        let w = encode(RerankApi::WorkersAi, &r, "m", "us-east-1");
+        assert_eq!(w["query"], "q");
+        assert_eq!(w["contexts"], json!([{"text": "a"}, {"text": "b"}, {"text": "{\"title\":\"c\"}"}]));
+        assert_eq!(w["top_k"], 2);
+        assert!(w.get("model").is_none());
         let b = encode(RerankApi::Bedrock, &r, "amazon.rerank-v1:0", "us-west-2");
         assert_eq!(
             b.pointer("/rerankingConfiguration/bedrockRerankingConfiguration/modelConfiguration/modelArn"),

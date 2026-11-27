@@ -4,23 +4,20 @@
  * whether it came whole or as events.
  */
 
-export type Endpoint = 'chat_completions' | 'responses' | 'messages' | 'embeddings';
+import {
+  ENDPOINTS,
+  endpointAllowsStream,
+  endpointOfPath,
+  endpointUsesChatForm,
+  isEndpoint,
+  type Endpoint,
+} from './endpoints';
 
-export const ENDPOINTS: { value: Endpoint; label: string; path: string }[] = [
-  { value: 'chat_completions', label: 'Chat', path: '/v1/chat/completions' },
-  { value: 'responses', label: 'Responses', path: '/v1/responses' },
-  { value: 'messages', label: 'Messages', path: '/v1/messages' },
-  { value: 'embeddings', label: 'Embeddings', path: '/v1/embeddings' },
-];
+export type { Endpoint };
+export { ENDPOINTS, endpointAllowsStream, endpointOfPath, endpointUsesChatForm, isEndpoint };
 
-export function isEndpoint(value: unknown): value is Endpoint {
-  return ENDPOINTS.some((e) => e.value === value);
-}
-
-/** The endpoint name of a logged endpoint path (`/v1/messages` → `messages`), when the playground sends it. */
-export function endpointOfPath(path: string | null | undefined): Endpoint | null {
-  return ENDPOINTS.find((e) => e.path === path)?.value ?? null;
-}
+/** The admin API attaches this for speech-to-text; the gateway turns it into multipart. */
+export const PLAYGROUND_FILE = '_playground_file';
 
 export type Role = 'user' | 'assistant';
 
@@ -37,6 +34,19 @@ export interface Composer {
   turns: Turn[];
   /** The embeddings input, one text per line. */
   input: string;
+  /** Text-to-speech */
+  speechInput: string;
+  voice: string;
+  /** Rerank */
+  rerankQuery: string;
+  rerankDocuments: string;
+  rerankTopN: string;
+  /** Speech-to-text (uploaded file, base64 without a data-URL prefix) */
+  audioFileName: string;
+  audioFileBase64: string;
+  /** Decisions / System One (Clef, Jev, …) */
+  decisionState: string;
+  decisionQuestions: string;
   temperature: string;
   topP: string;
   maxTokens: string;
@@ -55,15 +65,54 @@ export function emptyComposer(endpoint: Endpoint = 'chat_completions', model = '
     system: '',
     turns: [{ role: 'user', text: '' }],
     input: '',
+    speechInput: '',
+    voice: 'alloy',
+    rerankQuery: '',
+    rerankDocuments: '',
+    rerankTopN: '',
+    audioFileName: '',
+    audioFileBase64: '',
+    decisionState: 'Describe the situation to decide on.',
+    decisionQuestions: JSON.stringify(
+      {
+        urgent: { type: 'noul', instructions: 'Is this urgent?' },
+      },
+      null,
+      2,
+    ),
     temperature: '',
     topP: '',
     maxTokens: endpoint === 'messages' ? DEFAULT_MAX_TOKENS : '',
     stop: '',
-    stream: endpoint !== 'embeddings',
+    stream: endpointAllowsStream(endpoint),
   };
 }
 
 type Json = Record<string, unknown>;
+
+const DEFAULT_CLEF_MODEL = 'clef-flash';
+
+function decisionModelSelector(model: string): string {
+  const m = model.trim();
+  if (!m) return DEFAULT_CLEF_MODEL;
+  if (m === 'clef-flash' || m === 'clef') return m;
+  if (m.includes('clef-flash')) return 'clef-flash';
+  if (m.endsWith('/clef')) return 'clef';
+  return m;
+}
+
+function parseJsonOrText(text: string): string | Json {
+  const t = text.trim();
+  if (!t) return '';
+  if (t.startsWith('{') || t.startsWith('[')) {
+    try {
+      return JSON.parse(t) as Json;
+    } catch {
+      return t;
+    }
+  }
+  return t;
+}
 
 function isObject(v: unknown): v is Json {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -86,9 +135,37 @@ function lines(text: string): string[] {
 export function composerErrors(c: Composer): Partial<Record<keyof Composer, string>> {
   const errors: Partial<Record<keyof Composer, string>> = {};
   if (!c.model) errors.model = 'Choose a model.';
-  if (c.endpoint === 'embeddings') {
-    if (lines(c.input).length === 0) errors.input = 'Enter the text to embed.';
-    return errors;
+  switch (c.endpoint) {
+    case 'embeddings':
+      if (lines(c.input).length === 0) errors.input = 'Enter the text to embed.';
+      return errors;
+    case 'speech':
+      if (!c.speechInput.trim()) errors.speechInput = 'Enter the text to speak.';
+      if (!c.voice.trim()) errors.voice = 'Enter a voice id.';
+      return errors;
+    case 'transcriptions':
+      if (!c.audioFileBase64) errors.audioFileBase64 = 'Choose an audio file to transcribe.';
+      return errors;
+    case 'rerank':
+      if (!c.rerankQuery.trim()) errors.rerankQuery = 'Enter a query.';
+      if (lines(c.rerankDocuments).length === 0) errors.rerankDocuments = 'Enter at least one document.';
+      return errors;
+    case 'decisions': {
+      if (!c.decisionState.trim()) errors.decisionState = 'Enter a state to evaluate.';
+      if (!c.decisionQuestions.trim()) errors.decisionQuestions = 'Enter the questions JSON.';
+      else {
+        try {
+          const q = JSON.parse(c.decisionQuestions) as unknown;
+          if (typeof q !== 'object' || q === null || Array.isArray(q))
+            errors.decisionQuestions = 'Questions must be a JSON object.';
+        } catch {
+          errors.decisionQuestions = 'Questions must be valid JSON.';
+        }
+      }
+      return errors;
+    }
+    default:
+      break;
   }
   const t = num(c.temperature);
   if (c.temperature.trim() && (t === null || t < 0 || t > 2))
@@ -109,6 +186,36 @@ export function buildBody(c: Composer): Json {
   if (c.endpoint === 'embeddings') {
     const inputs = lines(c.input);
     return { model: c.model, input: inputs.length === 1 ? inputs[0] : inputs };
+  }
+  if (c.endpoint === 'speech') {
+    return { model: c.model, input: c.speechInput.trim(), voice: c.voice.trim() };
+  }
+  if (c.endpoint === 'transcriptions') {
+    return {
+      model: c.model,
+      [PLAYGROUND_FILE]: {
+        field: 'file',
+        filename: c.audioFileName.trim() || 'audio.wav',
+        data: c.audioFileBase64,
+      },
+    };
+  }
+  if (c.endpoint === 'rerank') {
+    const docs = lines(c.rerankDocuments);
+    const top = num(c.rerankTopN);
+    return {
+      model: c.model,
+      query: c.rerankQuery.trim(),
+      documents: docs,
+      ...(top !== null ? { top_n: top } : {}),
+    };
+  }
+  if (c.endpoint === 'decisions') {
+    return {
+      model: decisionModelSelector(c.model),
+      state: parseJsonOrText(c.decisionState),
+      questions: JSON.parse(c.decisionQuestions) as Json,
+    };
   }
   const turns = c.turns.filter((t) => t.text.trim()).map((t) => ({ role: t.role, content: t.text }));
   const system = c.system.trim() ? c.system : null;
@@ -167,6 +274,25 @@ export function parseBody(endpoint: Endpoint, body: unknown): { composer: Compos
     const input = body.input;
     if (typeof input === 'string') c.input = input;
     else if (Array.isArray(input) && input.every((i) => typeof i === 'string')) c.input = input.join('\n');
+  } else if (endpoint === 'speech') {
+    if (typeof body.input === 'string') c.speechInput = body.input;
+    if (typeof body.voice === 'string') c.voice = body.voice;
+  } else if (endpoint === 'transcriptions') {
+    const f = body[PLAYGROUND_FILE];
+    if (isObject(f)) {
+      if (typeof f.filename === 'string') c.audioFileName = f.filename;
+      if (typeof f.data === 'string') c.audioFileBase64 = f.data;
+    }
+  } else if (endpoint === 'rerank') {
+    if (typeof body.query === 'string') c.rerankQuery = body.query;
+    const docs = body.documents;
+    if (Array.isArray(docs) && docs.every((d) => typeof d === 'string')) c.rerankDocuments = docs.join('\n');
+    c.rerankTopN = numberText(body.top_n);
+  } else if (endpoint === 'decisions') {
+    const state = body.state;
+    if (typeof state === 'string') c.decisionState = state;
+    else if (state !== undefined) c.decisionState = JSON.stringify(state, null, 2);
+    if (body.questions !== undefined) c.decisionQuestions = JSON.stringify(body.questions, null, 2);
   } else {
     const turns: Turn[] = [];
     let ok = true;
@@ -212,6 +338,7 @@ export function parseBody(endpoint: Endpoint, body: unknown): { composer: Compos
   const rest: Json = { ...body };
   delete rest.stream;
   delete rest.stream_options;
+  delete rest[PLAYGROUND_FILE];
   return { composer: c, exact: sameJson(buildBody(c), rest) };
 }
 
@@ -258,10 +385,19 @@ export interface Assembled {
   error: string | null;
   /** Embeddings: how many vectors and their length. */
   vectors: { count: number; dimensions: number; sample: number[] } | null;
+  /** Rerank: hit count */
+  rerankHits: number | null;
 }
 
 export function emptyAssembled(): Assembled {
-  return { text: '', finish: null, usage: { input: null, output: null }, error: null, vectors: null };
+  return {
+    text: '',
+    finish: null,
+    usage: { input: null, output: null },
+    error: null,
+    vectors: null,
+    rerankHits: null,
+  };
 }
 
 function int(v: unknown): number | null {
@@ -354,6 +490,13 @@ export function assembleBody(body: unknown, answerText: (body: unknown) => strin
     };
     return a;
   }
+  if (isObject(body.answers)) {
+    a.text = JSON.stringify(body.answers, null, 2);
+    return a;
+  }
+  if (Array.isArray(body.results)) a.rerankHits = body.results.length;
+  else if (Array.isArray(body.data)) a.rerankHits = body.data.length;
+  if (typeof body.text === 'string' && !a.text) a.text = body.text;
   if (!a.error) a.text = answerText(body);
   if (Array.isArray(body.choices)) {
     const c: unknown = body.choices[0];

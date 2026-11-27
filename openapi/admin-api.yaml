@@ -22394,6 +22394,10 @@ components:
             - responses
             - messages
             - embeddings
+            - speech
+            - transcriptions
+            - rerank
+            - decisions
         body:
           type: object
         stream:

@@ -22,7 +22,9 @@ import {
   buildBody,
   composerErrors,
   emptyComposer,
+  endpointAllowsStream,
   endpointOfPath,
+  endpointUsesChatForm,
   ENDPOINTS,
   isEndpoint,
   parseBody,
@@ -47,13 +49,13 @@ function paramsSummary(c: Composer): string {
     c.temperature ? `temperature ${c.temperature}` : null,
     c.topP ? `top P ${c.topP}` : null,
     c.maxTokens ? `max ${c.maxTokens} tokens` : null,
-    c.stream ? 'streamed' : 'not streamed',
+    endpointAllowsStream(c.endpoint) ? (c.stream ? 'streamed' : 'not streamed') : null,
   ].filter(Boolean);
   return parts.join(' · ');
 }
 
 /**
- * The playground: compose a chat, Responses, Messages or embeddings request for a model, send it
+ * The playground: compose chat, embeddings, speech, rerank, or decision requests for a model, send it
  * through the gateway with a short-lived key the gateway keeps, and read the answer as it streams,
  * with the decision headers, the usage, cost and timing, and the request's record.
  */
@@ -232,7 +234,7 @@ function Playground() {
     setComposer({
       ...composer,
       endpoint,
-      stream: endpoint === 'embeddings' ? false : composer.stream || composer.endpoint === 'embeddings',
+      stream: endpointAllowsStream(endpoint),
       maxTokens: endpoint === 'messages' && !composer.maxTokens ? '1024' : composer.maxTokens,
     });
   }
@@ -253,12 +255,12 @@ function Playground() {
         ...body,
         ...(mode === 'json' && typeof body.model === 'string' ? {} : { model: composer.model }),
       },
-      stream: composer.endpoint !== 'embeddings' && composer.stream,
+      stream: endpointAllowsStream(composer.endpoint) && composer.stream,
     });
   }
 
   function continueConversation() {
-    if (!run?.answer.text || composer.endpoint === 'embeddings') return;
+    if (!run?.answer.text || !endpointUsesChatForm(composer.endpoint)) return;
     const answered = run.answer.text;
     const turns = composer.turns.filter((t) => t.text.trim());
     setEditor(
@@ -358,7 +360,7 @@ function Playground() {
             <span className="text-ui font-medium text-fg">Endpoint</span>
             <Segmented<Endpoint>
               label="Endpoint"
-              className="self-start max-sm:w-full max-sm:overflow-x-auto"
+              className="self-start max-sm:w-full max-sm:overflow-x-auto max-sm:flex-wrap"
               value={composer.endpoint}
               onChange={setEndpoint}
               options={ENDPOINTS.map((e) => ({ value: e.value, label: e.label }))}
@@ -385,7 +387,7 @@ function Playground() {
                 </p>
               ) : null}
               <ComposerForm value={composer} onChange={changeForm} errors={visibleErrors} onSubmit={submit} />
-              {composer.endpoint !== 'embeddings' ? (
+              {endpointUsesChatForm(composer.endpoint) ? (
                 <div className="-mx-5 border-y border-line max-sm:-mx-gutter-sm">
                   <button
                     type="button"
@@ -462,7 +464,7 @@ function Playground() {
         <Panel title="Response" bodyClassName="flex flex-col gap-4">
           <ResponsePanel
             run={run}
-            onContinue={composer.endpoint === 'embeddings' ? null : continueConversation}
+            onContinue={endpointUsesChatForm(composer.endpoint) ? continueConversation : null}
           />
         </Panel>
       </TileGrid>

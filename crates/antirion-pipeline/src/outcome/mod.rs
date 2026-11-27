@@ -9,7 +9,8 @@ use antirion_egress::headers::upstream_request_id;
 use antirion_egress::{BodyError, InboundBody, InboundResponse};
 use antirion_error::reason::hygiene;
 use antirion_error::{Code, Message, Reason};
-use antirion_providers::DeploymentRt;
+use antirion_providers::cloudflare;
+use antirion_providers::{DeploymentRt, Preset, ProviderType};
 use antirion_resilience::{AttemptTimers, Class, Failure, ResponsePredicate, TimerKind};
 use antirion_router::InFlight;
 use bytes::{Bytes, BytesMut};
@@ -590,13 +591,16 @@ async fn counted(a: &Attempt<'_>, up: InboundResponse) -> Result<(Done, Class), 
         Err(why) => return Err(a.unread(why, status.as_u16())),
     };
     let json = is_json(crate::attempt::essence(&headers).as_deref());
-    let raw = transcript::checked(a, status.as_u16(), raw, json).await?;
+    let mut raw = transcript::checked(a, status.as_u16(), raw, json).await?;
     a.record(Some(status.as_u16()), Class::Success, None);
     if a.plan.endpoint.dialect == antirion_dialects::Dialect::OpenAiAudio {
         // A transcript is the answer's content; an image answer's base64 payloads are left out.
         a.cx.log.response_content(&raw);
     }
-    if let Ok(v) = serde_json::from_slice::<Value>(&raw) {
+    if let Ok(mut v) = serde_json::from_slice::<Value>(&raw) {
+        if cloudflare_workers_transcript(a, &mut v) {
+            raw = Bytes::from(serde_json::to_vec(&v).unwrap_or_default());
+        }
         a.cx.log.update(|r| {
             if let Some((key, n)) = r.images_requested.clone() {
                 r.units
@@ -673,4 +677,27 @@ pub(crate) fn upstream_or_new_id(headers: &HeaderMap) -> String {
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned)
         .unwrap_or_else(|| antirion_core::RequestId::generate().as_str().replace('-', ""))
+}
+
+/// Workers AI wraps transcripts as `{ success, result: { text, … } }`; map that to OpenAI `{ text }`.
+fn cloudflare_workers_transcript(a: &Attempt<'_>, v: &mut Value) -> bool {
+    if !matches!(a.deployment.provider.kind, ProviderType::Preset(Preset::Cloudflare)) {
+        return false;
+    }
+    if !matches!(
+        a.plan.endpoint.upstream_path,
+        Some(
+            "/audio/transcriptions"
+                | "/audio/transcriptions/details"
+                | "/audio/translations"
+        )
+    ) {
+        return false;
+    }
+    let peeled = cloudflare::peel_envelope(v);
+    let Some(text) = peeled.get("text") else {
+        return false;
+    };
+    *v = serde_json::json!({ "text": text });
+    true
 }

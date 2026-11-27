@@ -248,7 +248,19 @@ fn provider(
     let http = http_version(spec, p.base_url.as_deref(), &at, errors);
     let tls = compile_tls(spec.get("tls"), http, &at.key("tls"), errors)?;
     let headers = header_map(&p.headers, &at.key("headers"), errors);
-    let operations = operations(spec, &at, errors);
+    let mut operations = operations(spec, &at, errors);
+    if matches!(kind, ProviderType::Preset(Preset::Cloudflare)) {
+        // Always override: saved specs must not keep OpenAI-style paths like `/v1/decisions`.
+        for op in [
+            "decide",
+            "systemone",
+            "rerank",
+            "speech",
+            "transcribe",
+        ] {
+            operations.insert(op.into(), "/run/{model}".into());
+        }
+    }
     let mut secrets: Vec<String> = p.auth.api_key.iter().cloned().collect();
     secrets.extend(p.auth.api_keys.iter().map(|k| k.key.clone()));
     if let Some(a) = spec.get("auth") {
@@ -587,6 +599,20 @@ mod tests {
             Some("https://api.cloudflare.com/client/v4/accounts/acct/ai")
         );
         assert!(cf.providers["p"].listing().is_none(), "Workers AI has no GET /models");
+        assert_eq!(
+            cf.providers["p"].operations.get("decide").map(String::as_str),
+            Some("/run/{model}")
+        );
+        let forced = compile(&json!({
+            "providers": {"p": {"type": "cloudflare", "cloudflare": {"account_id": "acct"},
+                               "auth": {"api_key": "tok"},
+                               "operations": {"decide": {"path": "/v1/decisions"}}}}
+        }))
+        .unwrap();
+        assert_eq!(
+            forced.providers["p"].operations.get("decide").map(String::as_str),
+            Some("/run/{model}")
+        );
     }
 
     #[test]
