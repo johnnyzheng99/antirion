@@ -11,6 +11,7 @@ const dir = resolve(
 );
 const data = Number(process.env.ANTIRION_E2E_DATA_PORT ?? 20480);
 const admin = Number(process.env.ANTIRION_E2E_ADMIN_PORT ?? 20481);
+const publicOrigin = process.env.ANTIRION_PUBLIC_ORIGIN?.trim();
 
 rmSync(join(dir, 'data'), { recursive: true, force: true });
 mkdirSync(dir, { recursive: true });
@@ -30,6 +31,7 @@ writeFileSync(
     'auth:',
     '  admin:',
     '    bootstrap_token: "${env:ANTIRION_BOOTSTRAP_TOKEN}"',
+    ...(publicOrigin ? [`    public_origin: "${publicOrigin}"`] : []),
     '    local:',
     '      enabled: true',
     '',

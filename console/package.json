@@ -20,6 +20,7 @@
     "dev:mock": "msw init public --no-save && NEXT_PUBLIC_API_MOCKS=1 next dev --port 3001",
     "build": "next build && node scripts/externalize-inline.mjs out",
     "serve": "node scripts/serve.mjs",
+    "gateway": "node scripts/gateway.mjs",
     "lint": "eslint . --max-warnings 0 && node scripts/policy.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
