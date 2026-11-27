@@ -39,7 +39,11 @@ ANTIRION_DEV_ADMIN_URL=http://127.0.0.1:18081 pnpm dev
 ```
 
 Open <http://localhost:3001/ui/> and sign in with the bootstrap token. The dev server proxies
-`/admin/v1` to the gateway's admin listener and reloads as you edit. `pnpm dev:mock` serves the
+`/admin/v1` to the gateway's admin listener and reloads as you edit. `ci/standalone.yaml` sets
+`auth.admin.public_origin` to `http://localhost:3001` so cookie-session writes (provider tests,
+saves, and the like) are accepted from the dev origin. If you use the embedded console at
+`http://127.0.0.1:18081/ui/` instead, comment that line out or set it to that URL and restart the
+gateway. `pnpm dev:mock` serves the
 screens with contract mocks and demo data, without a gateway. [console/README.md](console/README.md)
 describes the layout, the stores and what each screen reads.
 

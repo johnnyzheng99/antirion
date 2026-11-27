@@ -24,7 +24,7 @@ import {
   routeSettingsSpec,
 } from '../route-form';
 import { useRouting } from '../store';
-import { isRecord, type Json, nodeTypeLabel, STRATEGIES, type Strategy, strategyOf } from '../types';
+import { isRecord, type Json, nodeTypeLabel, strategyOf } from '../types';
 import { validateRule } from './rule-wizard';
 import { LimitsFields, StrategyStep, TargetsStep } from './wizard-steps';
 
@@ -64,17 +64,7 @@ function TargetFields({
   const locked = targetsLocked(draft);
   return (
     <div className="flex flex-col gap-5">
-      {other ? (
-        <StrategyStep draft={draft} set={set} locked={nodeTypeLabel(draft.original)} />
-      ) : (
-        <Field label="Strategy" hint={STRATEGIES.find((s) => s.value === draft.strategy)?.description}>
-          <Select
-            value={draft.strategy}
-            onChange={(v) => set('strategy', v as Strategy)}
-            options={STRATEGIES.map((s) => ({ value: s.value, label: s.label }))}
-          />
-        </Field>
-      )}
+      {other ? <StrategyStep draft={draft} set={set} locked={nodeTypeLabel(draft.original)} /> : null}
       <TargetsStep
         draft={draft}
         set={set}

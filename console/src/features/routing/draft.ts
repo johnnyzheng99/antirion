@@ -12,13 +12,13 @@ import {
   predicateText,
 } from './resilience';
 import {
-  isCompositeTarget,
-  type TargetSegment,
-  nextSegmentKey,
-  segmentLabel,
-  segmentToNode,
-  segmentsFromTarget,
-} from './segments';
+  blankGroup,
+  type GroupStrategy,
+  type RuleGroupDraft,
+  groupFromNode,
+  groupsFromTarget,
+  isMultiGroupTarget,
+} from './groups';
 import {
   canaryOf,
   type Condition,
@@ -57,9 +57,9 @@ export interface RuleDraft {
   conditions: Condition[];
   /** Percent of requests the rule takes (the sample predicate); empty for every request. */
   sample: string;
+  /** Ordered target groups; one group is one strategy, several form a fallback chain. */
+  groups: RuleGroupDraft[];
   strategy: Strategy;
-  /** Groups tried in order when `strategy` is `composite`. */
-  segments: TargetSegment[];
   targets: Target[];
   block: { status: 400 | 403 | 451; message: string; category: string };
   canary: {
@@ -140,7 +140,7 @@ export function blankDraft(): RuleDraft {
     conditions: [emptyCondition()],
     sample: '',
     strategy: 'single',
-    segments: [],
+    groups: [blankGroup('single')],
     targets: [{ deployment: '', weight: 1, role: '' }],
     block: { status: 403, message: 'Request blocked by routing policy.', category: 'custom' },
     canary: {
@@ -326,18 +326,60 @@ export function conditionEditable(rule: Rule | null): boolean {
   return rule === null || conditionsFrom(rule.when) !== null;
 }
 
+/** Copies one group's fields onto the rule draft shape the builder and preview use. */
+export function mergeGroupToDraft(draft: RuleDraft, group: RuleGroupDraft): RuleDraft {
+  return {
+    ...draft,
+    strategy: group.strategy,
+    targets: group.targets,
+    block: group.block,
+    canary: group.canary,
+    shadow: group.shadow,
+    adaptive: group.adaptive,
+    tier: group.tier,
+    pool: group.pool,
+    costQuality: group.costQuality,
+    sticky: group.sticky,
+    providerModel: group.providerModel,
+    routeRef: group.routeRef,
+    original: group.original ?? draft.original,
+  };
+}
+
+function groupFieldsFromDraft(draft: RuleDraft, seed: RuleGroupDraft): RuleGroupDraft {
+  const strategy = (draft.strategy === 'composite' ? seed.strategy : draft.strategy) as GroupStrategy;
+  return {
+    ...seed,
+    strategy,
+    targets: draft.targets.map((t) => ({ ...t })),
+    block: { ...draft.block },
+    canary: { ...draft.canary, steps: draft.canary.steps.map((s) => ({ ...s })) },
+    shadow: { ...draft.shadow },
+    adaptive: { ...draft.adaptive },
+    tier: { ...draft.tier },
+    pool: { ...draft.pool },
+    costQuality: { ...draft.costQuality },
+    sticky: { ...draft.sticky },
+    providerModel: { ...draft.providerModel },
+    routeRef: draft.routeRef,
+  };
+}
+
+export function ensureGroups(draft: RuleDraft): RuleGroupDraft[] {
+  if (draft.groups.length > 1) return draft.groups;
+  if (draft.groups.length === 1) return [groupFieldsFromDraft(draft, draft.groups[0]!)];
+  return [groupFieldsFromDraft(draft, blankGroup())];
+}
+
 export function draftFrom(rule: Rule | null): RuleDraft {
   const blank = blankDraft();
   if (!rule) return blank;
   const node = rule.target;
-  const strategy = strategyOf(node);
-  const target = isRecord(node) ? node : {};
   const cond = conditionsFrom(rule.when) ?? { join: 'all' as const, conditions: [], sample: '' };
-  const canary = canaryOf(node);
-  const mirror = mirrorOf(node);
-  const targets = targetsOf(node);
-  const parsed = segmentsFromTarget(node);
-  const composite = parsed !== null && parsed.length > 1;
+  const parsed = groupsFromTarget(node);
+  const solo = groupFromNode(node);
+  const groups = parsed ?? (solo ? [solo] : [blankGroup()]);
+  const primary = mergeGroupToDraft(blank, groups[0]!);
   return {
     ...blank,
     name: rule.name,
@@ -345,47 +387,19 @@ export function draftFrom(rule: Rule | null): RuleDraft {
     enabled: rule.enabled,
     tags: rule.tags,
     ...cond,
-    strategy: composite ? 'composite' : strategy === 'other' ? 'single' : strategy,
-    segments: composite ? parsed : [],
-    targets: targets.length > 0 ? targets : blank.targets,
-    block: {
-      status: target.status === 400 || target.status === 451 ? target.status : 403,
-      message: typeof target.message === 'string' ? target.message : blank.block.message,
-      category: typeof target.category === 'string' ? target.category : 'custom',
-    },
-    canary: canary
-      ? {
-          steps: canary.steps.map((s) => ({ weight: String(s.weight), after: s.after })),
-          budget: canary.budget !== null,
-          maxErrorRate: canary.budget ? sharePercent(canary.budget.max_error_rate).replace('%', '') : '2',
-          window: canary.budget?.window ?? '5m',
-          action: canary.budget?.action ?? 'rollback',
-        }
-      : blank.canary,
-    shadow: mirror
-      ? {
-          target: mirror.target,
-          percent: sharePercent(mirror.fraction).replace('%', ''),
-          sampleBy: mirror.sampleBy,
-        }
-      : blank.shadow,
-    tier:
-      strategy === 'tier'
-        ? {
-            tier: typeof target.tier === 'string' ? target.tier : 'fast',
-            strategy: (typeof target.strategy === 'string' ? target.strategy : 'least_cost') as TierStrategy,
-            includePreview: target.include_preview === true,
-          }
-        : blank.tier,
-    adaptive: strategy === 'adaptive' ? adaptiveOf(target) : blank.adaptive,
-    pool: strategy === 'pool' ? poolOf(target) : blank.pool,
-    costQuality: strategy === 'cost_quality' ? costQualityOf(target, blank.costQuality) : blank.costQuality,
-    sticky: stickyOf(node),
-    providerModel: {
-      provider: typeof target.provider === 'string' ? target.provider : '',
-      upstreamModel: typeof target.upstream_model === 'string' ? target.upstream_model : '',
-    },
-    routeRef: typeof target.route === 'string' ? target.route : '',
+    groups,
+    strategy: groups.length > 1 ? 'composite' : primary.strategy,
+    targets: primary.targets,
+    block: primary.block,
+    canary: primary.canary,
+    shadow: primary.shadow,
+    tier: primary.tier,
+    adaptive: primary.adaptive,
+    pool: primary.pool,
+    costQuality: primary.costQuality,
+    sticky: primary.sticky,
+    providerModel: primary.providerModel,
+    routeRef: primary.routeRef,
     params: paramsOf(node),
     limits: limitsOf(node),
     hedging: hedgingFrom(resilienceOf(node).hedging),
@@ -406,8 +420,10 @@ export function draftFrom(rule: Rule | null): RuleDraft {
 export function targetsLocked(draft: RuleDraft): boolean {
   if (draft.original === undefined) return false;
   if (strategyOf(draft.original) === 'other') return true;
-  if (draft.strategy === 'composite') return segmentsFromTarget(draft.original) === null;
-  if (isCompositeTarget(draft.original)) return segmentsFromTarget(draft.original) === null;
+  const parsed = groupsFromTarget(draft.original);
+  if (strategyOf(draft.original) === 'composite') return parsed === null;
+  if (draft.groups.length > 1) return parsed === null;
+  if (isMultiGroupTarget(draft.original)) return parsed === null;
   return !plainTargets(draft.original) && strategyOf(draft.original) === draft.strategy;
 }
 
@@ -486,9 +502,9 @@ const MANAGED = new Set([
 function kept(draft: RuleDraft): Record<string, Json> {
   const o = draft.original;
   if (!isRecord(o)) return {};
-  if (draft.strategy === 'composite') {
-    if (strategyOf(o) !== 'fallback' || !isCompositeTarget(o)) return {};
-  } else if (strategyOf(o) !== draft.strategy) return {};
+  if (draft.groups.length > 1) {
+    if (strategyOf(o) !== 'fallback' || !isMultiGroupTarget(o)) return {};
+  } else if (strategyOf(o) !== draft.groups[0]?.strategy) return {};
   const out: Record<string, Json> = {};
   for (const [k, v] of Object.entries(o))
     if (!MANAGED.has(k) && !(k === 'mirror' && draft.strategy === 'shadow')) out[k] = v;
@@ -509,7 +525,7 @@ function policiesOf(draft: RuleDraft): Record<string, Json> | undefined {
   set(timeouts, 'attempt', draft.limits.attempt.trim() || undefined);
   set(timeouts, 'deadline', draft.limits.deadline.trim() || undefined);
   set(retry, 'max_attempts', draft.limits.maxAttempts.trim() ? Number(draft.limits.maxAttempts) : undefined);
-  if (movesOn(draft.strategy))
+  if (movesOn(effectiveStrategy(draft)))
     for (const t of TRIGGERS) {
       const current = classes[t.value];
       const on = draft.triggers[t.value];
@@ -554,58 +570,59 @@ function stickyBy(draft: RuleDraft): string | undefined {
   return kind === 'header' || kind === 'metadata' ? `${kind}:${name.trim()}` : kind;
 }
 
-export function toTarget(draft: RuleDraft): Json {
-  if (targetsLocked(draft)) {
-    const o = isRecord(draft.original) ? { ...draft.original } : draft.original;
-    if (!isRecord(o)) return o;
-    const policies = policiesOf(draft);
-    if (policies) o.policies = policies;
-    else delete o.policies;
-    const params = paramsTo(draft);
-    if (params) o.params = params;
-    else delete o.params;
-    return o;
-  }
+export function effectiveStrategy(draft: RuleDraft): Strategy {
+  const groups = ensureGroups(draft);
+  return groups.length > 1 ? 'composite' : (groups[0]?.strategy ?? draft.strategy);
+}
+
+function buildTargetForGroup(group: RuleGroupDraft): Json {
+  return buildStrategyTarget(mergeGroupToDraft(blankDraft(), group));
+}
+
+/** Builds a strategy node without rule-level policies or params (for children of a fallback chain). */
+function buildStrategyTarget(draft: RuleDraft): Json {
   const t = draft.targets.filter((x) => x.deployment);
-  const extra = kept(draft);
-  const policies = draft.strategy === 'block' ? undefined : policiesOf(draft);
-  const params = draft.strategy === 'block' ? undefined : paramsTo(draft);
-  const withPolicies = (node: Record<string, Json>): Json => ({
-    ...extra,
-    ...node,
-    ...(params ? { params } : {}),
-    ...(policies ? { policies } : {}),
-  });
-  const sticky = stickyBy(draft);
+  const extra = (() => {
+    const o = draft.original;
+    if (!isRecord(o) || strategyOf(o) !== draft.strategy) return {};
+    const out: Record<string, Json> = {};
+    for (const [k, v] of Object.entries(o))
+      if (!MANAGED.has(k) && !(k === 'mirror' && draft.strategy === 'shadow')) out[k] = v;
+    return out;
+  })();
+  const sticky =
+    canStick(draft.strategy) && draft.sticky.kind !== ''
+      ? draft.sticky.kind === 'header' || draft.sticky.kind === 'metadata'
+        ? `${draft.sticky.kind}:${draft.sticky.name.trim()}`
+        : draft.sticky.kind
+      : undefined;
   switch (draft.strategy) {
     case 'single': {
       const first = t[0];
       if (!first) return '';
-      if (!policies && !params && !first.role.trim() && Object.keys(extra).length === 0)
-        return first.deployment;
-      return withPolicies({
+      if (!first.role.trim() && Object.keys(extra).length === 0) return first.deployment;
+      return {
+        ...extra,
         ...(first.role.trim() ? { id: first.role.trim() } : {}),
         type: 'deployment',
         deployment: first.deployment,
-      });
+      };
     }
     case 'weighted':
-      return withPolicies({
+      return {
+        ...extra,
         type: 'weighted',
         children: t.map((x) => child(x, true)),
         ...(sticky ? { sticky_by: sticky } : {}),
-      });
-    case 'composite': {
-      const children = draft.segments.map((s) => segmentToNode(s)).filter((c) => c !== '');
-      return withPolicies({ type: 'fallback', children });
-    }
+      };
     case 'fallback':
     case 'least_busy':
     case 'least_latency':
-      return withPolicies({
+      return {
+        ...extra,
         type: draft.strategy,
         children: t.map((x) => child(x, draft.strategy === 'least_busy' && x.weight !== 1)),
-      });
+      };
     case 'canary': {
       const stable = t[0];
       const candidate = t[1];
@@ -615,7 +632,8 @@ export function toTarget(draft: RuleDraft): Json {
       const first = steps[0]?.weight ?? 0;
       const stableRole = stable?.role.trim() || 'stable';
       const candidateRole = candidate?.role.trim() || 'canary';
-      return withPolicies({
+      return {
+        ...extra,
         type: 'weighted',
         children: [
           { id: stableRole, deployment: stable?.deployment ?? '', weight: Math.max(0, 100 - first) },
@@ -635,12 +653,13 @@ export function toTarget(draft: RuleDraft): Json {
             : {}),
         },
         ...(sticky ? { sticky_by: sticky } : {}),
-      });
+      };
     }
     case 'adaptive': {
       const a = draft.adaptive;
       const samples = Number(a.minSamples.trim());
-      return withPolicies({
+      return {
+        ...extra,
         type: 'weighted',
         algorithm: 'thompson',
         experiment: a.experiment.trim(),
@@ -652,11 +671,12 @@ export function toTarget(draft: RuleDraft): Json {
         })),
         ...(a.minSamples.trim() && samples !== 10 ? { min_samples_per_arm: samples } : {}),
         ...(a.stop ? { stop_after: { delta: ratio(a.delta) } } : {}),
-      });
+      };
     }
     case 'shadow': {
       const primary = t[0];
-      return withPolicies({
+      return {
+        ...extra,
         ...(primary?.role.trim() ? { id: primary.role.trim() } : {}),
         type: 'deployment',
         deployment: primary?.deployment ?? '',
@@ -665,22 +685,24 @@ export function toTarget(draft: RuleDraft): Json {
           fraction: ratio(draft.shadow.percent),
           ...(draft.shadow.sampleBy === 'session' ? { sample_by: 'session' } : {}),
         },
-      });
+      };
     }
     case 'tier':
-      return withPolicies({
+      return {
+        ...extra,
         type: 'tier',
         tier: draft.tier.tier,
         ...(draft.tier.strategy !== 'least_cost' ? { strategy: draft.tier.strategy } : {}),
         ...(draft.tier.includePreview ? { include_preview: true } : {}),
-      });
+      };
     case 'pool': {
       const o = isRecord(draft.original) && strategyOf(draft.original) === 'pool' ? draft.original : {};
       const scheduler: Record<string, Json> = { ...(isRecord(o.scheduler) ? o.scheduler : {}) };
       if (draft.pool.lora) scheduler.lora = true;
       else Reflect.deleteProperty(scheduler, 'lora');
       const p = draft.pool;
-      return withPolicies({
+      return {
+        ...extra,
         type: 'pool',
         children: t.map((x) => child(x, false)),
         ...(Object.keys(scheduler).length > 0 ? { scheduler } : {}),
@@ -694,7 +716,7 @@ export function toTarget(draft: RuleDraft): Json {
               ...(p.onError === 'builtin' ? { picker_on_error: 'builtin' } : {}),
             }
           : {}),
-      });
+      };
     }
     case 'cost_quality': {
       const c = draft.costQuality;
@@ -709,25 +731,26 @@ export function toTarget(draft: RuleDraft): Json {
               embedding_model: c.embeddingModel.trim(),
               models: { strong: c.strongName.trim(), weak: c.weakName.trim() },
             };
-      return withPolicies({
+      return {
+        ...extra,
         type: 'cost_quality',
         strong: c.strong,
         weak: c.weak,
         [c.by === 'fraction' ? 'strong_fraction' : 'threshold']: ratio(c.percent),
         scorer,
         ...(c.onError !== 'strong' ? { on_error: c.onError } : {}),
-      });
+      };
     }
     case 'provider_model':
-      return withPolicies({
+      return {
+        ...extra,
         type: 'provider_model',
         provider: draft.providerModel.provider.trim(),
         upstream_model: draft.providerModel.upstreamModel.trim(),
-      });
+      };
     case 'route': {
-      // A reference written without its type keeps that shorthand.
       const typed = !(isRecord(draft.original) && draft.original.type === undefined);
-      return withPolicies({ ...(typed ? { type: 'route' } : {}), route: draft.routeRef.trim() });
+      return { ...extra, ...(typed ? { type: 'route' } : {}), route: draft.routeRef.trim() };
     }
     case 'block':
       return {
@@ -737,7 +760,46 @@ export function toTarget(draft: RuleDraft): Json {
         message: draft.block.message,
         category: draft.block.category,
       };
+    default:
+      return '';
   }
+}
+
+export function toTarget(draft: RuleDraft): Json {
+  if (targetsLocked(draft)) {
+    const o = isRecord(draft.original) ? { ...draft.original } : draft.original;
+    if (!isRecord(o)) return o;
+    const policies = policiesOf(draft);
+    if (policies) o.policies = policies;
+    else delete o.policies;
+    const params = paramsTo(draft);
+    if (params) o.params = params;
+    else delete o.params;
+    return o;
+  }
+  const groups = ensureGroups(draft);
+  const working = groups.length === 1 ? mergeGroupToDraft(draft, groups[0]!) : draft;
+  const extra = kept({ ...draft, groups });
+  const strat = effectiveStrategy({ ...draft, groups });
+  const policies = strat === 'block' ? undefined : policiesOf(draft);
+  const params = strat === 'block' ? undefined : paramsTo(draft);
+  const withPolicies = (node: Record<string, Json>): Json => ({
+    ...extra,
+    ...node,
+    ...(params ? { params } : {}),
+    ...(policies ? { policies } : {}),
+  });
+  if (groups.length > 1) {
+    const children = groups.map((g) => buildTargetForGroup(g)).filter((c) => c !== '');
+    return withPolicies({ type: 'fallback', children });
+  }
+  const built = buildStrategyTarget(working);
+  if (typeof built === 'string') {
+    if (!policies && !params && Object.keys(extra).length === 0) return built;
+    return withPolicies({ type: 'deployment', deployment: built });
+  }
+  if (built && isRecord(built) && !policies && !params && Object.keys(extra).length === 0) return built;
+  return withPolicies(isRecord(built) ? built : {});
 }
 
 /** The rule object written into the conditional node. */
@@ -762,6 +824,7 @@ export function describeDraft(d: RuleDraft): string {
 }
 
 function draftSentence(d: RuleDraft): string {
+  d = { ...d, strategy: effectiveStrategy(d) };
   const filled = {
     ...d,
     conditions: d.conditions.filter(
@@ -784,7 +847,11 @@ function draftSentence(d: RuleDraft): string {
           .join(', ') || '…'
       }${stickyBy(d) ? `, sticky by ${stickyLabel(stickyBy(d) ?? '')}` : ''}${extrasText(d)}.`;
     case 'composite':
-      return `${when}, try ${d.segments.map((s) => segmentLabel(s)).join(', then ')}${extrasText(d)}.`;
+      return `${when}, try ${ensureGroups(d)
+        .map((g) =>
+          describeDraft(mergeGroupToDraft({ ...d, groups: [g] }, g)).replace(/^When [^,]+, /, ''),
+        )
+        .join(', then ')}${extrasText(d)}.`;
     case 'fallback':
       return `${when}, try ${list(', then ')}${extrasText(d)}.`;
     case 'least_busy':

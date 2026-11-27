@@ -11,3 +11,6 @@ store:
 auth:
   admin:
     bootstrap_token: "${env:ANTIRION_BOOTSTRAP_TOKEN}"
+    # Cookie-session writes from `pnpm dev` at http://localhost:3001/ui/ (see CONTRIBUTING.md).
+    # For the embedded console at http://127.0.0.1:18081/ui/ only, comment this out.
+    public_origin: "http://localhost:3001"

@@ -77,10 +77,12 @@ describe('provider models, route references and request parameters in the wizard
     const base = { ...blankDraft(), name: 'r', conditions: [] };
     const locked = { when: false, targets: false };
     expect(validateRule({ ...base, strategy: 'provider_model' }, locked)).toMatchObject({
-      'providerModel.provider': 'The provider’s name',
-      'providerModel.upstreamModel': 'The provider’s id for the model',
+      'groups.0.providerModel.provider': 'The provider’s name',
+      'groups.0.providerModel.upstreamModel': 'The provider’s id for the model',
     });
-    expect(validateRule({ ...base, strategy: 'route' }, locked).routeRef).toBe('Choose the route');
+    expect(validateRule({ ...base, strategy: 'route' }, locked)['groups.0.routeRef']).toBe(
+      'Choose the route',
+    );
     const params = validateRule(
       {
         ...base,

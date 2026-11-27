@@ -302,9 +302,9 @@ describe('routing rules', () => {
     const draft = draftFrom(rule);
     expect(draft.strategy).toBe('composite');
     expect(targetsLocked(draft)).toBe(false);
-    expect(draft.segments).toHaveLength(2);
-    expect(draft.segments[0]?.strategy).toBe('weighted');
-    expect(draft.segments[1]?.strategy).toBe('fallback');
+    expect(draft.groups).toHaveLength(2);
+    expect(draft.groups[0]?.strategy).toBe('weighted');
+    expect(draft.groups[1]?.strategy).toBe('fallback');
     expect(toRule(draft).target).toEqual({
       type: 'fallback',
       children: [
@@ -318,8 +318,8 @@ describe('routing rules', () => {
         { type: 'fallback', children: ['BACKUP-A', 'BACKUP-B'] },
       ],
     });
-    draft.segments[0]!.targets[0]!.weight = 60;
-    draft.segments[0]!.targets[1]!.weight = 40;
+    draft.groups[0]!.targets[0]!.weight = 60;
+    draft.groups[0]!.targets[1]!.weight = 40;
     const saved = toRule(draft).target as {
       children: { type: string; children: { weight: number }[] }[];
     };

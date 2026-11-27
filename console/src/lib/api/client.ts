@@ -373,7 +373,8 @@ export function describeError(error: unknown): string {
     if (error.approvalRequested) return error.message;
     if (error.changeRequestRequired)
       return 'This change needs a reviewer’s approval. Open a change request to submit it.';
-    if (error.status === 403) return "You don't have permission to do this.";
+    if (error.status === 403)
+      return error.message.trim() || "You don't have permission to do this.";
     if (error.status === 404) return 'This item no longer exists. Refresh the page.';
     if (error.status === 412)
       return 'Someone else changed this while you were editing. Reload to see their changes, then try again.';

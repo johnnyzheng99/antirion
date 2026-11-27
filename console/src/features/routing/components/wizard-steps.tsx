@@ -11,14 +11,17 @@ import { ModelMark } from '@/components/ui/marks';
 import { Combobox, Select } from '@/components/ui/select';
 import type { DeploymentResource, Tier } from '@/lib/api/types';
 
-import { canStick, emptyCondition, movesOn, type RuleDraft, type StickyKind } from '../draft';
 import {
-  blankSegment,
-  defaultCompositeSegments,
-  SEGMENT_STRATEGIES,
-  type SegmentStrategy,
-  type TargetSegment,
-} from '../segments';
+  canStick,
+  effectiveStrategy,
+  emptyCondition,
+  ensureGroups,
+  mergeGroupToDraft,
+  movesOn,
+  type RuleDraft,
+  type StickyKind,
+} from '../draft';
+import { blankGroup, type GroupStrategy, type RuleGroupDraft } from '../groups';
 import { type Condition, FIELDS, GUARD_FIELDS, OPERATORS, STRATEGIES, type Target, TRIGGERS } from '../types';
 import { tierLabel } from '@/features/models/types';
 import { ListInput } from '@/features/mcp/components/parts';
@@ -237,16 +240,17 @@ export function StrategyStep({
 
   const pickStrategy = (v: RuleDraft['strategy']) => {
     if (v === 'composite') {
-      const segments = defaultCompositeSegments(draft);
-      if (patch) patch({ strategy: 'composite', segments });
+      const groups =
+        draft.groups.length >= 2 ? draft.groups : [blankGroup('weighted'), blankGroup('fallback')];
+      if (patch) patch({ strategy: 'composite', groups });
       else {
         set('strategy', 'composite');
-        set('segments', segments);
+        set('groups', groups);
       }
       return;
     }
     set('strategy', v);
-    set('segments', []);
+    set('groups', []);
     if (v === 'adaptive' && draft.targets.length < 2)
       set('targets', [
         draft.targets[0] ?? { deployment: '', weight: 1, role: '' },
@@ -344,48 +348,103 @@ function Legend({ children }: { children: ReactNode }) {
   return <legend className="mb-2 text-ui font-medium text-fg">{children}</legend>;
 }
 
-type SegmentSet = <K extends keyof RuleDraft>(key: K, value: RuleDraft[K]) => void;
+const GROUP_STRATEGIES = STRATEGIES.filter((s) => s.value !== 'composite');
 
-function updateSegment(
-  segments: TargetSegment[],
+function updateGroup(
+  groups: RuleGroupDraft[],
   index: number,
-  patch: Partial<TargetSegment>,
-): TargetSegment[] {
-  return segments.map((x, j) => (j === index ? { ...x, ...patch } : x));
+  patch: Partial<RuleGroupDraft>,
+): RuleGroupDraft[] {
+  return groups.map((x, j) => (j === index ? { ...x, ...patch } : x));
 }
 
-function setSegmentTarget(
-  segments: TargetSegment[],
-  gi: number,
-  ti: number,
-  patch: Partial<Target>,
-): TargetSegment[] {
-  return updateSegment(segments, gi, {
-    targets: (segments[gi]?.targets ?? []).map((x, j) => (j === ti ? { ...x, ...patch } : x)),
-  });
+function scopedErrors(errors: Errors, prefix: string): Errors {
+  const out: Errors = {};
+  for (const [k, v] of Object.entries(errors)) {
+    if (k.startsWith(prefix)) out[k.slice(prefix.length)] = v;
+  }
+  return out;
 }
 
-/** Step 3 for composite: each group has its own strategy and deployment list, tried in order. */
-function CompositeTargetsStep({
+const GROUP_FIELDS = new Set<keyof RuleGroupDraft>([
+  'strategy',
+  'targets',
+  'block',
+  'canary',
+  'shadow',
+  'adaptive',
+  'tier',
+  'pool',
+  'costQuality',
+  'sticky',
+  'providerModel',
+  'routeRef',
+  'original',
+]);
+
+function groupSet(draft: RuleDraft, set: Set, gi: number): Set {
+  return (key, value) => {
+    if (GROUP_FIELDS.has(key as keyof RuleGroupDraft)) {
+      set(
+        'groups',
+        draft.groups.map((g, j) => (j === gi ? { ...g, [key]: value } : g)) as RuleDraft['groups'],
+      );
+      if (draft.groups.length === 1 && gi === 0) set(key, value);
+    } else {
+      set(key, value);
+    }
+  };
+}
+
+function onGroupStrategyChange(groups: RuleGroupDraft[], gi: number, strat: GroupStrategy): RuleGroupDraft[] {
+  const group = groups[gi]!;
+  let targets = group.targets;
+  if (strat === 'single' && targets.length > 1)
+    targets = [targets[0] ?? { deployment: '', weight: 1, role: '' }];
+  if (strat === 'adaptive' && targets.length < 2)
+    targets = [
+      targets[0] ?? { deployment: '', weight: 1, role: '' },
+      { deployment: '', weight: 1, role: '' },
+    ];
+  if (strat === 'canary' && targets.length < 2)
+    targets = [
+      { ...(targets[0] ?? { deployment: '', weight: 1 }), role: targets[0]?.role || 'stable' },
+      { deployment: '', weight: 1, role: 'canary' },
+    ];
+  return updateGroup(groups, gi, { strategy: strat, targets });
+}
+
+/** Targets step: one or more groups, each with any strategy, tried in order when there are several. */
+function RuleGroupsStep({
   draft,
   set,
   errors,
   deployments,
+  tiers,
 }: {
   draft: RuleDraft;
-  set: SegmentSet;
+  set: Set;
   errors: Errors;
   deployments: DeploymentResource[];
+  tiers: Tier[];
 }) {
-  const groups = draft.segments;
-  const bump = (next: TargetSegment[]) => set('segments', next);
-
   useEffect(() => {
-    if (groups.length >= 2) return;
-    set('segments', defaultCompositeSegments(draft));
-  }, [groups.length, draft, set]); // draft: seed groups from targets when strategy was set before segments existed
+    if (draft.groups.length > 0) return;
+    set('groups', [blankGroup()]);
+  }, [draft.groups.length, set]);
 
-  const segmentLegend = (strategy: SegmentStrategy, index: number) => {
+  const groups = draft.groups.length > 0 ? draft.groups : ensureGroups(draft);
+  const bump = (next: RuleGroupDraft[]) => {
+    set('groups', next);
+    if (next.length === 1 && next[0]) {
+      const m = mergeGroupToDraft(draft, next[0]);
+      set('strategy', m.strategy);
+    } else if (next.length > 1) set('strategy', 'composite');
+  };
+  const multi = groups.length > 1;
+
+  const groupLegend = (index: number) => {
+    if (!multi) return 'Strategy';
     if (index === 0) return 'First strategy group';
     if (index === groups.length - 1) return 'Then, if that group fails';
     return `Then, if group ${index} fails`;
@@ -393,22 +452,23 @@ function CompositeTargetsStep({
 
   return (
     <div className="flex flex-col gap-5">
-      <p className="text-ui text-muted">
-        Each group runs with its own strategy. When every target in a group fails or is unavailable, the
-        next group is tried.
-      </p>
-      <FieldError error={errors.segments} />
-      {groups.map((group, gi) => {
-        const strat = group.strategy;
-        const showWeight = strat === 'weighted';
-        const showRole = strat !== 'single';
-        return (
-          <fieldset
-            key={group.key}
-            className="flex flex-col gap-3 rounded-control border border-line bg-sunken/40 p-3"
-          >
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <legend className="text-ui font-medium text-fg">{segmentLegend(strat, gi)}</legend>
+      {multi ? (
+        <p className="text-ui text-muted">
+          Each group runs with its own strategy. When every target in a group fails or is unavailable, the
+          next group is tried.
+        </p>
+      ) : null}
+      {groups.map((group, gi) => (
+        <fieldset
+          key={group.key}
+          className={cn(
+            'flex flex-col gap-3',
+            multi && 'rounded-control border border-line bg-sunken/40 p-3',
+          )}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <legend className="text-ui font-medium text-fg">{groupLegend(gi)}</legend>
+            {multi ? (
               <div className="flex items-center gap-1">
                 <IconButton
                   icon="arrowUp"
@@ -417,7 +477,7 @@ function CompositeTargetsStep({
                   onClick={() => {
                     const next = [...groups];
                     const [item] = next.splice(gi, 1);
-                    next.splice(gi - 1, 0, item as TargetSegment);
+                    next.splice(gi - 1, 0, item as RuleGroupDraft);
                     bump(next);
                   }}
                 />
@@ -428,127 +488,51 @@ function CompositeTargetsStep({
                   onClick={() => {
                     const next = [...groups];
                     const [item] = next.splice(gi, 1);
-                    next.splice(gi + 1, 0, item as TargetSegment);
+                    next.splice(gi + 1, 0, item as RuleGroupDraft);
                     bump(next);
                   }}
                 />
                 <IconButton
                   icon="x"
                   label={`Remove group ${gi + 1}`}
-                  disabled={groups.length <= 2}
+                  disabled={groups.length <= 1}
                   onClick={() => bump(groups.filter((_, j) => j !== gi))}
                 />
               </div>
-            </div>
-            <Field label="Strategy in this group">
-              <Select
-                value={group.strategy}
-                onChange={(v) =>
-                  bump(
-                    updateSegment(groups, gi, {
-                      strategy: v as SegmentStrategy,
-                      targets:
-                        v === 'single' && group.targets.length > 1
-                          ? [group.targets[0] ?? { deployment: '', weight: 1, role: '' }]
-                          : group.targets,
-                    }),
-                  )
-                }
-                options={SEGMENT_STRATEGIES.map((s) => ({
-                  value: s.value,
-                  label: s.label,
-                }))}
-              />
-            </Field>
-            <fieldset className="flex flex-col gap-2">
-              <Legend>
-                {strat === 'fallback'
-                  ? 'Deployments, in order'
-                  : strat === 'weighted'
-                    ? 'Deployments and weights'
-                    : 'Deployments'}
-              </Legend>
-              {group.targets.map((t, ti) => (
-                <div
-                  key={ti}
-                  className="grid grid-cols-[1fr_90px_120px_auto] items-center gap-2 max-sm:grid-cols-[1fr_auto]"
-                >
-                  <DeploymentPicker
-                    label={`Group ${gi + 1}, deployment ${ti + 1}`}
-                    value={t.deployment}
-                    onChange={(v) => bump(setSegmentTarget(groups, gi, ti, { deployment: v }))}
-                    deployments={deployments}
-                  />
-                  {showWeight ? (
-                    <NumberInput
-                      aria-label={`Weight of deployment ${ti + 1} in group ${gi + 1}`}
-                      min={0}
-                      value={String(t.weight)}
-                      onChange={(v) =>
-                        bump(setSegmentTarget(groups, gi, ti, { weight: Number(v) || 0 }))
-                      }
-                    />
-                  ) : (
-                    <span />
-                  )}
-                  {showRole ? (
-                    <Input
-                      mono
-                      aria-label={`Role of deployment ${ti + 1} in group ${gi + 1}`}
-                      placeholder="primary"
-                      value={t.role}
-                      onChange={(e) => bump(setSegmentTarget(groups, gi, ti, { role: e.target.value }))}
-                    />
-                  ) : (
-                    <span />
-                  )}
-                  <IconButton
-                    icon="x"
-                    label={`Remove deployment ${ti + 1} from group ${gi + 1}`}
-                    disabled={group.targets.length <= 1}
-                    onClick={() =>
-                      bump(updateSegment(groups, gi, { targets: group.targets.filter((_, j) => j !== ti) }))
-                    }
-                  />
-                </div>
-              ))}
-              <FieldError error={errors[`segments.${gi}.targets`] ?? errors[`segments.${gi}.roles`]} />
-              {strat !== 'single' ? (
-                <Button
-                  size="sm"
-                  icon="plus"
-                  className="self-start"
-                  disabled={group.targets.length >= 20}
-                  onClick={() =>
-                    bump(
-                      updateSegment(groups, gi, {
-                        targets: [...group.targets, { deployment: '', weight: 1, role: '' }],
-                      }),
-                    )
-                  }
-                >
-                  Add deployment
-                </Button>
-              ) : null}
-            </fieldset>
-          </fieldset>
-        );
-      })}
+            ) : null}
+          </div>
+          <Field label="Strategy">
+            <Select
+              value={group.strategy}
+              onChange={(v) => bump(onGroupStrategyChange(groups, gi, v as GroupStrategy))}
+              options={GROUP_STRATEGIES.map((s) => ({ value: s.value, label: s.label }))}
+            />
+          </Field>
+          <StrategyTargetFields
+            draft={mergeGroupToDraft(draft, group)}
+            set={groupSet(draft, set, gi)}
+            errors={scopedErrors(errors, `groups.${gi}.`)}
+            deployments={deployments}
+            tiers={tiers}
+            showTriggers={!multi}
+          />
+        </fieldset>
+      ))}
       <Button
         size="sm"
         icon="plus"
         className="self-start"
         disabled={groups.length >= 10}
-        onClick={() => bump([...groups, blankSegment('fallback')])}
+        onClick={() => bump([...groups, blankGroup('fallback')])}
       >
         Add strategy group
       </Button>
-      <Triggers draft={draft} set={set} />
+      {multi && movesOn(effectiveStrategy(draft)) ? <Triggers draft={draft} set={set} /> : null}
     </div>
   );
 }
 
-/** Step 3: targets with weights and role labels, and each strategy's own settings. */
+/** Step 2: targets with weights and role labels, and each strategy's own settings. */
 export function TargetsStep({
   draft,
   set,
@@ -564,19 +548,6 @@ export function TargetsStep({
   tiers: Tier[];
   locked: string | null;
 }) {
-  const s = draft.strategy;
-  const setTarget = (i: number, patch: Partial<Target>) =>
-    set(
-      'targets',
-      draft.targets.map((x, j) => (j === i ? { ...x, ...patch } : x)),
-    );
-
-  if (s === 'composite') {
-    return (
-      <CompositeTargetsStep draft={draft} set={set} errors={errors} deployments={deployments} />
-    );
-  }
-
   if (locked)
     return (
       <div className="rounded-control border border-line bg-sunken px-3 py-2.5 text-ui">
@@ -585,6 +556,34 @@ export function TargetsStep({
           These targets include nested rules or settings the wizard doesn’t edit; they are kept as written.
         </p>
       </div>
+    );
+
+  return (
+    <RuleGroupsStep draft={draft} set={set} errors={errors} deployments={deployments} tiers={tiers} />
+  );
+}
+
+/** Fields for one strategy inside a group (or the route drawer’s single target). */
+export function StrategyTargetFields({
+  draft,
+  set,
+  errors,
+  deployments,
+  tiers,
+  showTriggers = true,
+}: {
+  draft: RuleDraft;
+  set: Set;
+  errors: Errors;
+  deployments: DeploymentResource[];
+  tiers: Tier[];
+  showTriggers?: boolean;
+}) {
+  const s = draft.strategy;
+  const setTarget = (i: number, patch: Partial<Target>) =>
+    set(
+      'targets',
+      draft.targets.map((x, j) => (j === i ? { ...x, ...patch } : x)),
     );
 
   if (s === 'block') return <BlockFields draft={draft} set={set} />;
@@ -658,7 +657,7 @@ export function TargetsStep({
           checked={draft.tier.includePreview}
           onChange={(v) => set('tier', { ...draft.tier, includePreview: v })}
         />
-        <Triggers draft={draft} set={set} />
+        {showTriggers ? <Triggers draft={draft} set={set} /> : null}
       </div>
     );
 
@@ -850,7 +849,7 @@ export function TargetsStep({
           ) : null}
         </fieldset>
         <Sticky draft={draft} set={set} errors={errors} />
-        <Triggers draft={draft} set={set} />
+        {showTriggers ? <Triggers draft={draft} set={set} /> : null}
       </div>
     );
 
@@ -929,7 +928,7 @@ export function TargetsStep({
       {s === 'adaptive' ? <AdaptiveFields draft={draft} set={set} errors={errors} /> : null}
       {s === 'pool' ? <PoolFields draft={draft} set={set} errors={errors} /> : null}
       {canStick(s) ? <Sticky draft={draft} set={set} errors={errors} /> : null}
-      {movesOn(s) ? <Triggers draft={draft} set={set} /> : null}
+      {showTriggers && movesOn(s) ? <Triggers draft={draft} set={set} /> : null}
     </div>
   );
 }

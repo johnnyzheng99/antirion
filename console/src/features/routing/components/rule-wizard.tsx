@@ -19,6 +19,9 @@ import {
   conditionEditable,
   describeDraft,
   draftFrom,
+  effectiveStrategy,
+  ensureGroups,
+  mergeGroupToDraft,
   movesOn,
   paramsErrors,
   type RuleDraft,
@@ -28,9 +31,9 @@ import {
 import { durationMs, validateExtras } from '../resilience';
 import { useRouting } from '../store';
 import { describePredicate, type Json, nodeTypeLabel, type Rule, strategyOf, withRules } from '../types';
-import { ConditionsStep, LimitsFields, StrategyStep, TargetsStep } from './wizard-steps';
+import { ConditionsStep, LimitsFields, TargetsStep } from './wizard-steps';
 
-const STEPS = ['Conditions', 'Strategy', 'Targets', 'Review'] as const;
+const STEPS = ['Conditions', 'Targets', 'Review'] as const;
 
 /** The name of the first route of a gateway, when none was chosen. */
 const NEW_ROUTE = 'global';
@@ -66,119 +69,104 @@ export function validateRule(
     if (!sample.success) out.sample = sample.error.issues[0]?.message ?? 'Invalid';
   }
   if (!locked.targets) {
-    const picked = d.targets.filter((t) => t.deployment);
-    const needs: Record<string, number> = {
-      single: 1,
-      weighted: 1,
-      fallback: 1,
-      least_busy: 1,
-      least_latency: 1,
-      shadow: 1,
-      pool: 1,
-    };
-    if (d.strategy === 'composite') {
-      if (d.segments.length < 2) out.segments = 'Add at least two strategy groups';
-      const segNeeds: Record<string, number> = {
+    const validateOne = (gd: RuleDraft, prefix: string) => {
+      const picked = gd.targets.filter((t) => t.deployment);
+      const needs: Record<string, number> = {
         single: 1,
         weighted: 1,
         fallback: 1,
         least_busy: 1,
         least_latency: 1,
+        shadow: 1,
+        pool: 1,
       };
-      d.segments.forEach((seg, si) => {
-        const segPicked = seg.targets.filter((t) => t.deployment);
-        if ((segNeeds[seg.strategy] ?? 0) > segPicked.length)
-          out[`segments.${si}.targets`] = 'Choose at least one deployment';
-        const roles = seg.targets.map((t) => t.role.trim()).filter(Boolean);
-        if (roles.some((r) => !ROLE.test(r)))
-          out[`segments.${si}.roles`] = 'Roles use lowercase letters, digits, - and _, e.g. primary';
-        else if (new Set(roles).size !== roles.length)
-          out[`segments.${si}.roles`] = 'Give each deployment a different role';
-      });
-    } else if ((needs[d.strategy] ?? 0) > picked.length) out.targets = 'Choose at least one deployment';
-    if (d.strategy === 'canary') {
-      if (!d.targets[0]?.deployment || !d.targets[1]?.deployment)
-        out.targets = 'Choose the stable deployment and the candidate';
-      else if (d.targets[0].deployment === d.targets[1].deployment)
-        out.targets = 'The candidate must differ from the stable deployment';
-      const steps = d.canary.steps.filter((s) => s.weight.trim() !== '');
-      if (steps.length === 0) out['canary.steps'] = 'Add at least one step';
-      else if (steps.some((s) => !/^\d+$/.test(s.weight.trim()) || Number(s.weight) > 100))
-        out['canary.steps'] = 'Each share is a whole percent from 0 to 100';
-      else if (steps.some((s) => !DURATION.test(s.after.trim() || '0s')))
-        out['canary.steps'] = 'Write each time as a number and a unit, e.g. 1h';
-      if (d.canary.budget) {
-        if (!(Number(d.canary.maxErrorRate) > 0 && Number(d.canary.maxErrorRate) <= 100))
-          out['canary.maxErrorRate'] = 'Enter a percent above 0';
-        if (!DURATION.test(d.canary.window.trim())) out['canary.window'] = 'e.g. 5m';
+      if ((needs[gd.strategy] ?? 0) > picked.length) out[`${prefix}targets`] = 'Choose at least one deployment';
+      if (gd.strategy === 'canary') {
+        if (!gd.targets[0]?.deployment || !gd.targets[1]?.deployment)
+          out[`${prefix}targets`] = 'Choose the stable deployment and the candidate';
+        else if (gd.targets[0].deployment === gd.targets[1].deployment)
+          out[`${prefix}targets`] = 'The candidate must differ from the stable deployment';
+        const steps = gd.canary.steps.filter((s) => s.weight.trim() !== '');
+        if (steps.length === 0) out[`${prefix}canary.steps`] = 'Add at least one step';
+        else if (steps.some((s) => !/^\d+$/.test(s.weight.trim()) || Number(s.weight) > 100))
+          out[`${prefix}canary.steps`] = 'Each share is a whole percent from 0 to 100';
+        else if (steps.some((s) => !DURATION.test(s.after.trim() || '0s')))
+          out[`${prefix}canary.steps`] = 'Write each time as a number and a unit, e.g. 1h';
+        if (gd.canary.budget) {
+          if (!(Number(gd.canary.maxErrorRate) > 0 && Number(gd.canary.maxErrorRate) <= 100))
+            out[`${prefix}canary.maxErrorRate`] = 'Enter a percent above 0';
+          if (!DURATION.test(gd.canary.window.trim())) out[`${prefix}canary.window`] = 'e.g. 5m';
+        }
       }
-    }
-    if (d.strategy === 'shadow') {
-      if (!d.shadow.target) out['shadow.target'] = 'Choose the deployment that receives the copies';
-      else if (d.shadow.target === d.targets[0]?.deployment)
-        out['shadow.target'] = 'Copy to a different deployment';
-      if (!(Number(d.shadow.percent) > 0 && Number(d.shadow.percent) <= 100))
-        out['shadow.percent'] = 'Enter a percent above 0';
-    }
-    if (d.strategy === 'tier' && !d.tier.tier) out.tier = 'Choose a tier';
-    if (d.strategy === 'provider_model') {
-      if (!/^\S+$/.test(d.providerModel.provider.trim()))
-        out['providerModel.provider'] = 'The provider’s name';
-      if (!d.providerModel.upstreamModel.trim())
-        out['providerModel.upstreamModel'] = 'The provider’s id for the model';
-    }
-    if (d.strategy === 'route' && !d.routeRef.trim()) out.routeRef = 'Choose the route';
-    if (d.strategy === 'pool' && d.pool.picker === 'external') {
-      if (!/^https?:\/\/\S+$/.test(d.pool.url.trim()))
-        out['pool.url'] = 'The picker’s address, e.g. http://picker.internal:9002';
-      const t = d.pool.timeout.trim();
-      const ms = t ? durationMs(t) : 300;
-      if (ms === null || ms < 10 || ms > 30_000) out['pool.timeout'] = 'From 10ms to 30s, e.g. 300ms';
-    }
-    if (d.strategy === 'cost_quality') {
-      const c = d.costQuality;
-      if (!c.strong) out['costQuality.strong'] = 'Choose the strong deployment';
-      if (!c.weak) out['costQuality.weak'] = 'Choose the weak deployment';
-      else if (c.weak === c.strong) out['costQuality.weak'] = 'Choose a different deployment';
-      if (!(c.percent.trim() !== '' && Number(c.percent) >= 0 && Number(c.percent) <= 100))
-        out['costQuality.percent'] = 'A percent from 0 to 100';
-      if (c.scorer === 'matrix_factorization') {
-        if (!c.modelFile.trim()) out['costQuality.modelFile'] = 'The path of the trained model file';
-        if (!c.embeddingModel.trim()) out['costQuality.embeddingModel'] = 'The embeddings Model to use';
-        if (!c.strongName.trim()) out['costQuality.strongName'] = 'As the file names it';
-        if (!c.weakName.trim()) out['costQuality.weakName'] = 'As the file names it';
+      if (gd.strategy === 'shadow') {
+        if (!gd.shadow.target) out[`${prefix}shadow.target`] = 'Choose the deployment that receives the copies';
+        else if (gd.shadow.target === gd.targets[0]?.deployment)
+          out[`${prefix}shadow.target`] = 'Copy to a different deployment';
+        if (!(Number(gd.shadow.percent) > 0 && Number(gd.shadow.percent) <= 100))
+          out[`${prefix}shadow.percent`] = 'Enter a percent above 0';
       }
-    }
-    if (d.strategy === 'adaptive') {
-      if (picked.length < 2) out.targets = 'Choose at least two deployments to learn between';
-      if (!/^\S{1,128}$/.test(d.adaptive.experiment.trim()))
-        out['adaptive.experiment'] = 'Name the experiment, e.g. support-model-trial';
-      if (!d.adaptive.metric.trim()) out['adaptive.metric'] = 'Choose the feedback metric it learns from';
-      const samples = d.adaptive.minSamples.trim();
-      if (samples && !(/^\d+$/.test(samples) && Number(samples) >= 1))
-        out['adaptive.minSamples'] = 'A whole number of at least 1';
-      if (d.adaptive.stop && !(Number(d.adaptive.delta) > 0 && Number(d.adaptive.delta) <= 50))
-        out['adaptive.delta'] = 'A percent above 0 and at most 50';
-    }
-    if (d.strategy !== 'composite') {
-      const roles = d.targets.map((t) => t.role.trim()).filter(Boolean);
+      if (gd.strategy === 'tier' && !gd.tier.tier) out[`${prefix}tier`] = 'Choose a tier';
+      if (gd.strategy === 'provider_model') {
+        if (!/^\S+$/.test(gd.providerModel.provider.trim()))
+          out[`${prefix}providerModel.provider`] = 'The provider’s name';
+        if (!gd.providerModel.upstreamModel.trim())
+          out[`${prefix}providerModel.upstreamModel`] = 'The provider’s id for the model';
+      }
+      if (gd.strategy === 'route' && !gd.routeRef.trim()) out[`${prefix}routeRef`] = 'Choose the route';
+      if (gd.strategy === 'pool' && gd.pool.picker === 'external') {
+        if (!/^https?:\/\/\S+$/.test(gd.pool.url.trim()))
+          out[`${prefix}pool.url`] = 'The picker’s address, e.g. http://picker.internal:9002';
+        const t = gd.pool.timeout.trim();
+        const ms = t ? durationMs(t) : 300;
+        if (ms === null || ms < 10 || ms > 30_000) out[`${prefix}pool.timeout`] = 'From 10ms to 30s, e.g. 300ms';
+      }
+      if (gd.strategy === 'cost_quality') {
+        const c = gd.costQuality;
+        if (!c.strong) out[`${prefix}costQuality.strong`] = 'Choose the strong deployment';
+        if (!c.weak) out[`${prefix}costQuality.weak`] = 'Choose the weak deployment';
+        else if (c.weak === c.strong) out[`${prefix}costQuality.weak`] = 'Choose a different deployment';
+        if (!(c.percent.trim() !== '' && Number(c.percent) >= 0 && Number(c.percent) <= 100))
+          out[`${prefix}costQuality.percent`] = 'A percent from 0 to 100';
+        if (c.scorer === 'matrix_factorization') {
+          if (!c.modelFile.trim()) out[`${prefix}costQuality.modelFile`] = 'The path of the trained model file';
+          if (!c.embeddingModel.trim())
+            out[`${prefix}costQuality.embeddingModel`] = 'The embeddings Model to use';
+          if (!c.strongName.trim()) out[`${prefix}costQuality.strongName`] = 'As the file names it';
+          if (!c.weakName.trim()) out[`${prefix}costQuality.weakName`] = 'As the file names it';
+        }
+      }
+      if (gd.strategy === 'adaptive') {
+        if (picked.length < 2) out[`${prefix}targets`] = 'Choose at least two deployments to learn between';
+        if (!/^\S{1,128}$/.test(gd.adaptive.experiment.trim()))
+          out[`${prefix}adaptive.experiment`] = 'Name the experiment, e.g. support-model-trial';
+        if (!gd.adaptive.metric.trim()) out[`${prefix}adaptive.metric`] = 'Choose the feedback metric it learns from';
+        const samples = gd.adaptive.minSamples.trim();
+        if (samples && !(/^\d+$/.test(samples) && Number(samples) >= 1))
+          out[`${prefix}adaptive.minSamples`] = 'A whole number of at least 1';
+        if (gd.adaptive.stop && !(Number(gd.adaptive.delta) > 0 && Number(gd.adaptive.delta) <= 50))
+          out[`${prefix}adaptive.delta`] = 'A percent above 0 and at most 50';
+      }
+      const roles = gd.targets.map((t) => t.role.trim()).filter(Boolean);
       if (roles.some((r) => !ROLE.test(r)))
-        out.roles = 'Roles use lowercase letters, digits, - and _, e.g. primary';
-      else if (new Set(roles).size !== roles.length) out.roles = 'Give each deployment a different role';
-    }
-    if (
-      (d.strategy === 'weighted' || d.strategy === 'canary') &&
-      (d.sticky.kind === 'header' || d.sticky.kind === 'metadata') &&
-      !d.sticky.name.trim()
-    )
-      out['sticky.name'] = d.sticky.kind === 'header' ? 'Enter the header name' : 'Enter the metadata key';
+        out[`${prefix}roles`] = 'Roles use lowercase letters, digits, - and _, e.g. primary';
+      else if (new Set(roles).size !== roles.length)
+        out[`${prefix}roles`] = 'Give each deployment a different role';
+      if (
+        (gd.strategy === 'weighted' || gd.strategy === 'canary') &&
+        (gd.sticky.kind === 'header' || gd.sticky.kind === 'metadata') &&
+        !gd.sticky.name.trim()
+      )
+        out[`${prefix}sticky.name`] =
+          gd.sticky.kind === 'header' ? 'Enter the header name' : 'Enter the metadata key';
+    };
+    ensureGroups(d).forEach((g, gi) => validateOne(mergeGroupToDraft(d, g), `groups.${gi}.`));
   }
   for (const key of ['attempt', 'deadline'] as const) {
     const r = durationOrEmpty.safeParse(d.limits[key]);
     if (!r.success) out[`limits.${key}`] = r.error.issues[0]?.message ?? 'Invalid';
   }
-  if (movesOn(d.strategy)) Object.assign(out, validateExtras(d.hedging, d.predicates, ''));
-  if (d.strategy !== 'block') Object.assign(out, paramsErrors(d));
+  if (movesOn(effectiveStrategy(d))) Object.assign(out, validateExtras(d.hedging, d.predicates, ''));
+  if (effectiveStrategy(d) !== 'block') Object.assign(out, paramsErrors(d));
   const attempts = d.limits.maxAttempts.trim();
   if (attempts && !(/^\d+$/.test(attempts) && Number(attempts) >= 1 && Number(attempts) <= 10))
     out['limits.maxAttempts'] = 'From 1 to 10';
@@ -206,8 +194,8 @@ function stepOf(key: string): number {
     key.startsWith('predicates') ||
     key.startsWith('params')
   )
-    return 3;
-  return 2;
+    return 2;
+  return 1;
 }
 
 export interface RuleWizardProps {
@@ -254,9 +242,6 @@ export function RuleWizard({
 
   const whenLocked = !conditionEditable(editing);
   const lockedTargets = targetsLocked(draft);
-  const strategyLocked =
-    editing && strategyOf(editing.target) === 'other' ? nodeTypeLabel(editing.target) : null;
-
   const nextRules = () => {
     const rule = toRule(draft, whenLocked ? (editing?.when ?? undefined) : undefined);
     if (editing) return rules.map((r, i) => (i === editing.index ? rule : r));
@@ -385,9 +370,6 @@ export function RuleWizard({
         />
       ) : null}
       {step === 1 ? (
-        <StrategyStep draft={draft} set={set} patch={patch} locked={strategyLocked} />
-      ) : null}
-      {step === 2 ? (
         <TargetsStep
           draft={draft}
           set={set}
@@ -397,7 +379,7 @@ export function RuleWizard({
           locked={lockedTargets && editing ? `${nodeTypeLabel(editing.target)} target` : null}
         />
       ) : null}
-      {step === 3 ? (
+      {step === 2 ? (
         <div className="flex flex-col gap-5">
           <p className="rounded-control border border-line bg-sunken px-3 py-2.5 text-body text-fg">
             {preview}

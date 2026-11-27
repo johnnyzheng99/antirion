@@ -259,7 +259,6 @@ describe('creating routes', () => {
     const drawer = await screen.findByRole('dialog', { name: 'Create rule' });
     await user.type(within(drawer).getByLabelText(/^Name/), 'support');
     await user.type(within(drawer).getByLabelText('Value of condition 1'), 'support');
-    await user.click(within(drawer).getByRole('button', { name: 'Next: strategy' }));
     await user.click(within(drawer).getByRole('button', { name: 'Next: targets' }));
     await pickOption(within(drawer).getByLabelText('Deployment 1'), /dep-b/);
     await user.click(within(drawer).getByRole('button', { name: 'Next: review' }));
@@ -303,7 +302,6 @@ describe('editing routes', () => {
     await pickOption(within(drawer).getByLabelText('Field of condition 1'), 'input tokens');
     await pickOption(within(drawer).getByLabelText('Operator of condition 1'), '>');
     await user.type(within(drawer).getByLabelText('Value of condition 1'), '1000');
-    await user.click(within(drawer).getByRole('button', { name: 'Next: strategy' }));
     await user.click(within(drawer).getByRole('button', { name: 'Next: targets' }));
     await pickOption(within(drawer).getByLabelText('Deployment 1'), /dep-b/);
     await user.click(within(drawer).getByRole('button', { name: 'Next: review' }));
