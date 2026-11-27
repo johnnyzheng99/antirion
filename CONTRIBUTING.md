@@ -38,7 +38,7 @@ pnpm install --frozen-lockfile
 ANTIRION_DEV_ADMIN_URL=http://127.0.0.1:18081 pnpm dev
 ```
 
-Open <http://localhost:3000/ui/> and sign in with the bootstrap token. The dev server proxies
+Open <http://localhost:3001/ui/> and sign in with the bootstrap token. The dev server proxies
 `/admin/v1` to the gateway's admin listener and reloads as you edit. `pnpm dev:mock` serves the
 screens with contract mocks and demo data, without a gateway. [console/README.md](console/README.md)
 describes the layout, the stores and what each screen reads.

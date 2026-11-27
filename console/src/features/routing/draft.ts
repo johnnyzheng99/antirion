@@ -12,6 +12,14 @@ import {
   predicateText,
 } from './resilience';
 import {
+  isCompositeTarget,
+  type TargetSegment,
+  nextSegmentKey,
+  segmentLabel,
+  segmentToNode,
+  segmentsFromTarget,
+} from './segments';
+import {
   canaryOf,
   type Condition,
   conditionKind,
@@ -50,6 +58,8 @@ export interface RuleDraft {
   /** Percent of requests the rule takes (the sample predicate); empty for every request. */
   sample: string;
   strategy: Strategy;
+  /** Groups tried in order when `strategy` is `composite`. */
+  segments: TargetSegment[];
   targets: Target[];
   block: { status: 400 | 403 | 451; message: string; category: string };
   canary: {
@@ -130,6 +140,7 @@ export function blankDraft(): RuleDraft {
     conditions: [emptyCondition()],
     sample: '',
     strategy: 'single',
+    segments: [],
     targets: [{ deployment: '', weight: 1, role: '' }],
     block: { status: 403, message: 'Request blocked by routing policy.', category: 'custom' },
     canary: {
@@ -325,6 +336,8 @@ export function draftFrom(rule: Rule | null): RuleDraft {
   const canary = canaryOf(node);
   const mirror = mirrorOf(node);
   const targets = targetsOf(node);
+  const parsed = segmentsFromTarget(node);
+  const composite = parsed !== null && parsed.length > 1;
   return {
     ...blank,
     name: rule.name,
@@ -332,7 +345,8 @@ export function draftFrom(rule: Rule | null): RuleDraft {
     enabled: rule.enabled,
     tags: rule.tags,
     ...cond,
-    strategy: strategy === 'other' ? 'single' : strategy,
+    strategy: composite ? 'composite' : strategy === 'other' ? 'single' : strategy,
+    segments: composite ? parsed : [],
     targets: targets.length > 0 ? targets : blank.targets,
     block: {
       status: target.status === 400 || target.status === 451 ? target.status : 403,
@@ -392,6 +406,8 @@ export function draftFrom(rule: Rule | null): RuleDraft {
 export function targetsLocked(draft: RuleDraft): boolean {
   if (draft.original === undefined) return false;
   if (strategyOf(draft.original) === 'other') return true;
+  if (draft.strategy === 'composite') return segmentsFromTarget(draft.original) === null;
+  if (isCompositeTarget(draft.original)) return segmentsFromTarget(draft.original) === null;
   return !plainTargets(draft.original) && strategyOf(draft.original) === draft.strategy;
 }
 
@@ -469,7 +485,10 @@ const MANAGED = new Set([
 
 function kept(draft: RuleDraft): Record<string, Json> {
   const o = draft.original;
-  if (!isRecord(o) || strategyOf(o) !== draft.strategy) return {};
+  if (!isRecord(o)) return {};
+  if (draft.strategy === 'composite') {
+    if (strategyOf(o) !== 'fallback' || !isCompositeTarget(o)) return {};
+  } else if (strategyOf(o) !== draft.strategy) return {};
   const out: Record<string, Json> = {};
   for (const [k, v] of Object.entries(o))
     if (!MANAGED.has(k) && !(k === 'mirror' && draft.strategy === 'shadow')) out[k] = v;
@@ -513,6 +532,7 @@ function policiesOf(draft: RuleDraft): Record<string, Json> | undefined {
 export function movesOn(strategy: Strategy): boolean {
   return [
     'fallback',
+    'composite',
     'weighted',
     'least_busy',
     'least_latency',
@@ -575,6 +595,10 @@ export function toTarget(draft: RuleDraft): Json {
         children: t.map((x) => child(x, true)),
         ...(sticky ? { sticky_by: sticky } : {}),
       });
+    case 'composite': {
+      const children = draft.segments.map((s) => segmentToNode(s)).filter((c) => c !== '');
+      return withPolicies({ type: 'fallback', children });
+    }
     case 'fallback':
     case 'least_busy':
     case 'least_latency':
@@ -759,6 +783,8 @@ function draftSentence(d: RuleDraft): string {
           .map((t) => `${t.deployment} ${t.weight}`)
           .join(', ') || '…'
       }${stickyBy(d) ? `, sticky by ${stickyLabel(stickyBy(d) ?? '')}` : ''}${extrasText(d)}.`;
+    case 'composite':
+      return `${when}, try ${d.segments.map((s) => segmentLabel(s)).join(', then ')}${extrasText(d)}.`;
     case 'fallback':
       return `${when}, try ${list(', then ')}${extrasText(d)}.`;
     case 'least_busy':

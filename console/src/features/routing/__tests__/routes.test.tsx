@@ -265,7 +265,7 @@ describe('creating routes', () => {
     await user.click(within(drawer).getByRole('button', { name: 'Next: review' }));
     expect(drawer).toHaveTextContent('This first rule also creates the shared route wp2-rules');
     await pickOption(within(drawer).getByLabelText('Everything else'), /dep-a/);
-    await user.click(within(drawer).getByRole('button', { name: 'Create rule' }));
+    await user.click(within(drawer).getByRole('button', { name: 'Save and close' }));
     await waitFor(() => expect(box.created).not.toBeNull());
     expect(box.created).toEqual({
       name: 'wp2-rules',
@@ -308,7 +308,7 @@ describe('editing routes', () => {
     await pickOption(within(drawer).getByLabelText('Deployment 1'), /dep-b/);
     await user.click(within(drawer).getByRole('button', { name: 'Next: review' }));
     expect(drawer).toHaveTextContent('that strategy now gets everything else');
-    await user.click(within(drawer).getByRole('button', { name: 'Create rule' }));
+    await user.click(within(drawer).getByRole('button', { name: 'Save and close' }));
     await waitFor(() => expect(box.put).not.toBeNull());
     expect(box.put).toEqual({
       name: 'wp2-one',

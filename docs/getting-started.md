@@ -286,7 +286,7 @@ export ANTIRION_BOOTSTRAP_TOKEN=dev-bootstrap-token-0123456789abcdef0123
 ```
 
 The console is then at <http://localhost:18081/ui/>. For console work, `pnpm dev` in `console/`
-serves it on <http://localhost:3000/ui/> with live reload against a gateway's Admin API (see
+serves it on <http://localhost:3001/ui/> with live reload against a gateway's Admin API (see
 `console/README.md`). The mock upstream runs from source with
 `cargo run --manifest-path bench/Cargo.toml -p antirion-bench-mock -- --profile LS`; a provider
 then reaches it at `http://127.0.0.1:19401/v1`. Delete `dev-data` for a fresh node.

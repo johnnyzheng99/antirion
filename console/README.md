@@ -10,7 +10,7 @@ server components that fetch, no route handlers and no middleware.
 | Command                          | What it does                                                                                                                                                         |
 | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `pnpm install --frozen-lockfile` | Installs dependencies (Node 22 or newer, pnpm from `packageManager`).                                                                                                |
-| `pnpm dev`                       | Dev server on `:3000`, proxying `/admin/v1` to `ANTIRION_DEV_ADMIN_URL` (default `http://127.0.0.1:20481`). Open `http://localhost:3000/ui/`.                        |
+| `pnpm dev`                       | Dev server on `:3001`, proxying `/admin/v1` to `ANTIRION_DEV_ADMIN_URL` (default `http://127.0.0.1:20481`). Open `http://localhost:3001/ui/`.                        |
 | `pnpm dev:mock`                  | The same, with the contract mocks in the browser for the endpoints a gateway does not serve yet (see below) plus demo data.                                          |
 | `pnpm build`                     | Static export to `out/`, then `scripts/externalize-inline.mjs` moves Next's inline scripts to files and fails on any inline script or style left.                    |
 | `pnpm serve`                     | Serves `out/` under `/ui` with the gateway's security headers and proxies `/admin/v1` (for checking a build without rebuilding the gateway).                         |

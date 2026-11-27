@@ -76,7 +76,26 @@ export function validateRule(
       shadow: 1,
       pool: 1,
     };
-    if ((needs[d.strategy] ?? 0) > picked.length) out.targets = 'Choose at least one deployment';
+    if (d.strategy === 'composite') {
+      if (d.segments.length < 2) out.segments = 'Add at least two strategy groups';
+      const segNeeds: Record<string, number> = {
+        single: 1,
+        weighted: 1,
+        fallback: 1,
+        least_busy: 1,
+        least_latency: 1,
+      };
+      d.segments.forEach((seg, si) => {
+        const segPicked = seg.targets.filter((t) => t.deployment);
+        if ((segNeeds[seg.strategy] ?? 0) > segPicked.length)
+          out[`segments.${si}.targets`] = 'Choose at least one deployment';
+        const roles = seg.targets.map((t) => t.role.trim()).filter(Boolean);
+        if (roles.some((r) => !ROLE.test(r)))
+          out[`segments.${si}.roles`] = 'Roles use lowercase letters, digits, - and _, e.g. primary';
+        else if (new Set(roles).size !== roles.length)
+          out[`segments.${si}.roles`] = 'Give each deployment a different role';
+      });
+    } else if ((needs[d.strategy] ?? 0) > picked.length) out.targets = 'Choose at least one deployment';
     if (d.strategy === 'canary') {
       if (!d.targets[0]?.deployment || !d.targets[1]?.deployment)
         out.targets = 'Choose the stable deployment and the candidate';
@@ -141,10 +160,12 @@ export function validateRule(
       if (d.adaptive.stop && !(Number(d.adaptive.delta) > 0 && Number(d.adaptive.delta) <= 50))
         out['adaptive.delta'] = 'A percent above 0 and at most 50';
     }
-    const roles = d.targets.map((t) => t.role.trim()).filter(Boolean);
-    if (roles.some((r) => !ROLE.test(r)))
-      out.roles = 'Roles use lowercase letters, digits, - and _, e.g. primary';
-    else if (new Set(roles).size !== roles.length) out.roles = 'Give each deployment a different role';
+    if (d.strategy !== 'composite') {
+      const roles = d.targets.map((t) => t.role.trim()).filter(Boolean);
+      if (roles.some((r) => !ROLE.test(r)))
+        out.roles = 'Roles use lowercase letters, digits, - and _, e.g. primary';
+      else if (new Set(roles).size !== roles.length) out.roles = 'Give each deployment a different role';
+    }
     if (
       (d.strategy === 'weighted' || d.strategy === 'canary') &&
       (d.sticky.kind === 'header' || d.sticky.kind === 'metadata') &&
@@ -292,6 +313,7 @@ export function RuleWizard({
 
   const set = <K extends keyof RuleDraft>(key: K, value: RuleDraft[K]) =>
     setDraft((d) => ({ ...d, [key]: value }));
+  const patch = (partial: Partial<RuleDraft>) => setDraft((d) => ({ ...d, ...partial }));
   const preview =
     whenLocked && editing
       ? `When ${describePredicate(editing.when)} → ${nodeTypeLabel(editing.target)}`
@@ -313,13 +335,18 @@ export function RuleWizard({
             </Button>
           ) : null}
           <span className="flex-1" />
+          {editing && step < STEPS.length - 1 ? (
+            <Button variant="secondary" busy={busy} onClick={() => void save()}>
+              Save and close
+            </Button>
+          ) : null}
           {step < STEPS.length - 1 ? (
             <Button variant="primary" onClick={() => go(step + 1)}>
               Next: {STEPS[step + 1]?.toLowerCase()}
             </Button>
           ) : (
             <Button variant="primary" busy={busy} onClick={() => void save()}>
-              {editing ? 'Save rule' : 'Create rule'}
+              Save and close
             </Button>
           )}
         </>
@@ -357,7 +384,9 @@ export function RuleWizard({
           locked={whenLocked && editing ? describePredicate(editing.when) : null}
         />
       ) : null}
-      {step === 1 ? <StrategyStep draft={draft} set={set} locked={strategyLocked} /> : null}
+      {step === 1 ? (
+        <StrategyStep draft={draft} set={set} patch={patch} locked={strategyLocked} />
+      ) : null}
       {step === 2 ? (
         <TargetsStep
           draft={draft}

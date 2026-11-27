@@ -1,8 +1,9 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 
 import { Button, IconButton } from '@/components/ui/button';
+import { cn } from '@/lib/cn';
 import { Checkbox, RadioGroup } from '@/components/ui/choice';
 import { Field, Input, NumberInput, Segmented, Textarea } from '@/components/ui/form';
 import { Icon } from '@/components/ui/icon';
@@ -11,6 +12,13 @@ import { Combobox, Select } from '@/components/ui/select';
 import type { DeploymentResource, Tier } from '@/lib/api/types';
 
 import { canStick, emptyCondition, movesOn, type RuleDraft, type StickyKind } from '../draft';
+import {
+  blankSegment,
+  defaultCompositeSegments,
+  SEGMENT_STRATEGIES,
+  type SegmentStrategy,
+  type TargetSegment,
+} from '../segments';
 import { type Condition, FIELDS, GUARD_FIELDS, OPERATORS, STRATEGIES, type Target, TRIGGERS } from '../types';
 import { tierLabel } from '@/features/models/types';
 import { ListInput } from '@/features/mcp/components/parts';
@@ -202,7 +210,18 @@ export function ConditionsStep({
 }
 
 /** Step 2: the strategy. */
-export function StrategyStep({ draft, set, locked }: { draft: RuleDraft; set: Set; locked: string | null }) {
+export function StrategyStep({
+  draft,
+  set,
+  patch,
+  locked,
+}: {
+  draft: RuleDraft;
+  set: Set;
+  /** Atomically updates several draft fields (needed when picking composite). */
+  patch?: (partial: Partial<RuleDraft>) => void;
+  locked: string | null;
+}) {
   if (locked)
     return (
       <div className="rounded-control border border-line bg-sunken px-3 py-2.5 text-ui">
@@ -213,29 +232,85 @@ export function StrategyStep({ draft, set, locked }: { draft: RuleDraft; set: Se
         </p>
       </div>
     );
+  const composite = STRATEGIES.find((s) => s.value === 'composite');
+  const singleTarget = STRATEGIES.filter((s) => s.value !== 'composite');
+
+  const pickStrategy = (v: RuleDraft['strategy']) => {
+    if (v === 'composite') {
+      const segments = defaultCompositeSegments(draft);
+      if (patch) patch({ strategy: 'composite', segments });
+      else {
+        set('strategy', 'composite');
+        set('segments', segments);
+      }
+      return;
+    }
+    set('strategy', v);
+    set('segments', []);
+    if (v === 'adaptive' && draft.targets.length < 2)
+      set('targets', [
+        draft.targets[0] ?? { deployment: '', weight: 1, role: '' },
+        { deployment: '', weight: 1, role: '' },
+      ]);
+    if (v === 'canary' && draft.targets.length < 2)
+      set('targets', [
+        {
+          ...(draft.targets[0] ?? { deployment: '', weight: 1 }),
+          role: draft.targets[0]?.role || 'stable',
+        },
+        { deployment: '', weight: 1, role: 'canary' },
+      ]);
+  };
+
+  const compositeOn = draft.strategy === 'composite';
+
   return (
-    <RadioGroup
-      label="Strategy"
-      variant="cards"
-      value={draft.strategy}
-      onChange={(v) => {
-        set('strategy', v);
-        if (v === 'adaptive' && draft.targets.length < 2)
-          set('targets', [
-            draft.targets[0] ?? { deployment: '', weight: 1, role: '' },
-            { deployment: '', weight: 1, role: '' },
-          ]);
-        if (v === 'canary' && draft.targets.length < 2)
-          set('targets', [
-            {
-              ...(draft.targets[0] ?? { deployment: '', weight: 1 }),
-              role: draft.targets[0]?.role || 'stable',
-            },
-            { deployment: '', weight: 1, role: 'canary' },
-          ]);
-      }}
-      options={STRATEGIES.map((s) => ({ value: s.value, label: s.label, description: s.description }))}
-    />
+    <div className="flex flex-col gap-4">
+      <RadioGroup
+        label="Strategy"
+        variant="cards"
+        value={draft.strategy}
+        onChange={(v) => pickStrategy(v)}
+        options={singleTarget.map((s) => ({
+          value: s.value,
+          label: s.label,
+          description: s.description,
+        }))}
+      />
+      {composite ? (
+        <h3 className="text-caption font-medium uppercase tracking-wide text-muted">Combine strategies</h3>
+      ) : null}
+      {composite ? (
+        <button
+          type="button"
+          role="radio"
+          aria-checked={compositeOn}
+          onClick={() => pickStrategy('composite')}
+          className={cn(
+            'flex w-full items-start gap-3 rounded-control border-2 border-dashed px-4 py-3.5 text-left transition-colors',
+            compositeOn
+              ? 'border-accent bg-accent-dim shadow-sm'
+              : 'border-line-strong bg-sunken hover:border-accent/60 hover:bg-hover',
+          )}
+        >
+          <span
+            className={cn(
+              'mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-sm border',
+              compositeOn ? 'border-accent bg-canvas text-accent' : 'border-line bg-canvas text-muted',
+            )}
+          >
+            <Icon name="shuffle" size={18} />
+          </span>
+          <span className="min-w-0">
+            <span className="block text-body font-semibold text-fg">{composite.label}</span>
+            <span className="mt-0.5 block text-caption text-muted">{composite.description}</span>
+            <span className="mt-2 block text-caption text-dim">
+              Each group uses its own strategy; the next group is tried when the previous one fails.
+            </span>
+          </span>
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -269,6 +344,210 @@ function Legend({ children }: { children: ReactNode }) {
   return <legend className="mb-2 text-ui font-medium text-fg">{children}</legend>;
 }
 
+type SegmentSet = <K extends keyof RuleDraft>(key: K, value: RuleDraft[K]) => void;
+
+function updateSegment(
+  segments: TargetSegment[],
+  index: number,
+  patch: Partial<TargetSegment>,
+): TargetSegment[] {
+  return segments.map((x, j) => (j === index ? { ...x, ...patch } : x));
+}
+
+function setSegmentTarget(
+  segments: TargetSegment[],
+  gi: number,
+  ti: number,
+  patch: Partial<Target>,
+): TargetSegment[] {
+  return updateSegment(segments, gi, {
+    targets: (segments[gi]?.targets ?? []).map((x, j) => (j === ti ? { ...x, ...patch } : x)),
+  });
+}
+
+/** Step 3 for composite: each group has its own strategy and deployment list, tried in order. */
+function CompositeTargetsStep({
+  draft,
+  set,
+  errors,
+  deployments,
+}: {
+  draft: RuleDraft;
+  set: SegmentSet;
+  errors: Errors;
+  deployments: DeploymentResource[];
+}) {
+  const groups = draft.segments;
+  const bump = (next: TargetSegment[]) => set('segments', next);
+
+  useEffect(() => {
+    if (groups.length >= 2) return;
+    set('segments', defaultCompositeSegments(draft));
+  }, [groups.length, draft, set]); // draft: seed groups from targets when strategy was set before segments existed
+
+  const segmentLegend = (strategy: SegmentStrategy, index: number) => {
+    if (index === 0) return 'First strategy group';
+    if (index === groups.length - 1) return 'Then, if that group fails';
+    return `Then, if group ${index} fails`;
+  };
+
+  return (
+    <div className="flex flex-col gap-5">
+      <p className="text-ui text-muted">
+        Each group runs with its own strategy. When every target in a group fails or is unavailable, the
+        next group is tried.
+      </p>
+      <FieldError error={errors.segments} />
+      {groups.map((group, gi) => {
+        const strat = group.strategy;
+        const showWeight = strat === 'weighted';
+        const showRole = strat !== 'single';
+        return (
+          <fieldset
+            key={group.key}
+            className="flex flex-col gap-3 rounded-control border border-line bg-sunken/40 p-3"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <legend className="text-ui font-medium text-fg">{segmentLegend(strat, gi)}</legend>
+              <div className="flex items-center gap-1">
+                <IconButton
+                  icon="arrowUp"
+                  label={`Move group ${gi + 1} up`}
+                  disabled={gi === 0}
+                  onClick={() => {
+                    const next = [...groups];
+                    const [item] = next.splice(gi, 1);
+                    next.splice(gi - 1, 0, item as TargetSegment);
+                    bump(next);
+                  }}
+                />
+                <IconButton
+                  icon="arrowDown"
+                  label={`Move group ${gi + 1} down`}
+                  disabled={gi === groups.length - 1}
+                  onClick={() => {
+                    const next = [...groups];
+                    const [item] = next.splice(gi, 1);
+                    next.splice(gi + 1, 0, item as TargetSegment);
+                    bump(next);
+                  }}
+                />
+                <IconButton
+                  icon="x"
+                  label={`Remove group ${gi + 1}`}
+                  disabled={groups.length <= 2}
+                  onClick={() => bump(groups.filter((_, j) => j !== gi))}
+                />
+              </div>
+            </div>
+            <Field label="Strategy in this group">
+              <Select
+                value={group.strategy}
+                onChange={(v) =>
+                  bump(
+                    updateSegment(groups, gi, {
+                      strategy: v as SegmentStrategy,
+                      targets:
+                        v === 'single' && group.targets.length > 1
+                          ? [group.targets[0] ?? { deployment: '', weight: 1, role: '' }]
+                          : group.targets,
+                    }),
+                  )
+                }
+                options={SEGMENT_STRATEGIES.map((s) => ({
+                  value: s.value,
+                  label: s.label,
+                }))}
+              />
+            </Field>
+            <fieldset className="flex flex-col gap-2">
+              <Legend>
+                {strat === 'fallback'
+                  ? 'Deployments, in order'
+                  : strat === 'weighted'
+                    ? 'Deployments and weights'
+                    : 'Deployments'}
+              </Legend>
+              {group.targets.map((t, ti) => (
+                <div
+                  key={ti}
+                  className="grid grid-cols-[1fr_90px_120px_auto] items-center gap-2 max-sm:grid-cols-[1fr_auto]"
+                >
+                  <DeploymentPicker
+                    label={`Group ${gi + 1}, deployment ${ti + 1}`}
+                    value={t.deployment}
+                    onChange={(v) => bump(setSegmentTarget(groups, gi, ti, { deployment: v }))}
+                    deployments={deployments}
+                  />
+                  {showWeight ? (
+                    <NumberInput
+                      aria-label={`Weight of deployment ${ti + 1} in group ${gi + 1}`}
+                      min={0}
+                      value={String(t.weight)}
+                      onChange={(v) =>
+                        bump(setSegmentTarget(groups, gi, ti, { weight: Number(v) || 0 }))
+                      }
+                    />
+                  ) : (
+                    <span />
+                  )}
+                  {showRole ? (
+                    <Input
+                      mono
+                      aria-label={`Role of deployment ${ti + 1} in group ${gi + 1}`}
+                      placeholder="primary"
+                      value={t.role}
+                      onChange={(e) => bump(setSegmentTarget(groups, gi, ti, { role: e.target.value }))}
+                    />
+                  ) : (
+                    <span />
+                  )}
+                  <IconButton
+                    icon="x"
+                    label={`Remove deployment ${ti + 1} from group ${gi + 1}`}
+                    disabled={group.targets.length <= 1}
+                    onClick={() =>
+                      bump(updateSegment(groups, gi, { targets: group.targets.filter((_, j) => j !== ti) }))
+                    }
+                  />
+                </div>
+              ))}
+              <FieldError error={errors[`segments.${gi}.targets`] ?? errors[`segments.${gi}.roles`]} />
+              {strat !== 'single' ? (
+                <Button
+                  size="sm"
+                  icon="plus"
+                  className="self-start"
+                  disabled={group.targets.length >= 20}
+                  onClick={() =>
+                    bump(
+                      updateSegment(groups, gi, {
+                        targets: [...group.targets, { deployment: '', weight: 1, role: '' }],
+                      }),
+                    )
+                  }
+                >
+                  Add deployment
+                </Button>
+              ) : null}
+            </fieldset>
+          </fieldset>
+        );
+      })}
+      <Button
+        size="sm"
+        icon="plus"
+        className="self-start"
+        disabled={groups.length >= 10}
+        onClick={() => bump([...groups, blankSegment('fallback')])}
+      >
+        Add strategy group
+      </Button>
+      <Triggers draft={draft} set={set} />
+    </div>
+  );
+}
+
 /** Step 3: targets with weights and role labels, and each strategy's own settings. */
 export function TargetsStep({
   draft,
@@ -291,6 +570,12 @@ export function TargetsStep({
       'targets',
       draft.targets.map((x, j) => (j === i ? { ...x, ...patch } : x)),
     );
+
+  if (s === 'composite') {
+    return (
+      <CompositeTargetsStep draft={draft} set={set} errors={errors} deployments={deployments} />
+    );
+  }
 
   if (locked)
     return (

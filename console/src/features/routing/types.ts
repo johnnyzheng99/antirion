@@ -87,6 +87,7 @@ export type Strategy =
   | 'single'
   | 'weighted'
   | 'fallback'
+  | 'composite'
   | 'least_busy'
   | 'least_latency'
   | 'canary'
@@ -110,6 +111,12 @@ export const STRATEGIES: { value: Strategy; label: string; description: string }
     value: 'fallback',
     label: 'Try primary, then fall back',
     description: 'Targets in order; the next is tried when one fails.',
+  },
+  {
+    value: 'composite',
+    label: 'Try strategies in order',
+    description:
+      'Several strategy groups in a chain: e.g. a weighted split first, then a fallback chain when every target in that group fails.',
   },
   { value: 'least_busy', label: 'Least busy', description: 'The target with the fewest requests in flight.' },
   {
@@ -327,8 +334,11 @@ export function strategyOf(node: Json): Strategy | 'other' {
   if (t === 'deployment') return isRecord(node.mirror) ? 'shadow' : 'single';
   if (t === 'weighted')
     return isRecord(node.canary) ? 'canary' : node.algorithm === 'thompson' ? 'adaptive' : 'weighted';
-  if (t === 'fallback' || t === 'least_busy' || t === 'least_latency' || t === 'block' || t === 'tier')
-    return t;
+  if (t === 'fallback') {
+    if (Array.isArray(node.children) && node.children.length > 1 && !plainTargets(node)) return 'composite';
+    return 'fallback';
+  }
+  if (t === 'least_busy' || t === 'least_latency' || t === 'block' || t === 'tier') return t;
   if (t === 'pool') return 'pool';
   if (t === 'provider_model' && typeof node.provider === 'string') return 'provider_model';
   if (t === 'route' && typeof node.route === 'string') return 'route';
