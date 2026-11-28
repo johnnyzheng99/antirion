@@ -5,6 +5,7 @@ use antirion_core::Stage;
 use antirion_egress::Payload;
 use antirion_error::{GatewayError, Message};
 use antirion_json::Splice;
+use antirion_providers::cloudflare::workers_ai_run_class;
 use antirion_providers::{ClientAnthropic, DeploymentRt, Preset, ProviderType, split_betas};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
@@ -14,7 +15,7 @@ use http::HeaderValue;
 use serde_json::Value;
 
 use crate::attempt::Plan;
-use crate::cell::Cell;
+use crate::cell::{Cell, operation_class};
 use crate::ctx::Ctx;
 use crate::parse::Parsed;
 use crate::xlate::AttemptXlate;
@@ -78,6 +79,30 @@ fn json_body(plan: &Plan<'_>, raw: &Bytes, skim: &antirion_json::Skim, d: &Deplo
 
 /// The Chat Completions changes a deployment's flags require: `max_tokens` renamed for one that does
 /// not accept it, and the `developer` role sent as `system` to one that lacks it.
+/// OpenAI-generic forward endpoints and Cloudflare `/run/{model}` reject `stream` and friends.
+fn forward_adjust(plan: &Plan<'_>, d: &DeploymentRt, body: Payload) -> Payload {
+    let class = operation_class(plan.endpoint);
+    let cf_run = matches!(d.provider.kind, ProviderType::Preset(Preset::Cloudflare))
+        && workers_ai_run_class(class);
+    let strip = cf_run
+        || matches!(
+            plan.endpoint.id,
+            "decisions" | "systemone" | "rerank"
+        );
+    if !strip {
+        return body;
+    }
+    let Ok(mut v) = serde_json::from_slice::<Value>(&body.contiguous()) else {
+        return body;
+    };
+    let Some(o) = v.as_object_mut() else {
+        return body;
+    };
+    o.remove("stream");
+    o.remove("stream_options");
+    Payload::from(serde_json::to_vec(&v).unwrap_or_default())
+}
+
 fn chat_adjust(plan: &Plan<'_>, d: &DeploymentRt, body: Payload) -> Payload {
     if plan.endpoint.id != "chat_completions" {
         return body;
@@ -176,7 +201,11 @@ pub(crate) async fn upstream_body(
             | (Cell::Embed(_) | Cell::Rerank(_), _) => Err(untranslatable()),
             (Cell::InvokeAsMessages, _) => Ok((raw.clone().into(), json_type, None)),
             (Cell::Identity, _) if plan.endpoint.upstream().is_some() => Ok((
-                chat_adjust(plan, d, json_body(plan, raw, skim, d)),
+                chat_adjust(
+                    plan,
+                    d,
+                    forward_adjust(plan, d, json_body(plan, raw, skim, d)),
+                ),
                 json_type,
                 None,
             )),
@@ -197,7 +226,11 @@ pub(crate) async fn upstream_body(
                     None,
                 ))
             }
-            (Cell::Identity, _) => Ok((raw.clone().into(), json_type, None)),
+            (Cell::Identity, _) => Ok((
+                forward_adjust(plan, d, raw.clone().into()),
+                json_type,
+                None,
+            )),
         },
         Parsed::Multipart { raw, form, rest, .. } => {
             if cloudflare_whisper(plan, d) {

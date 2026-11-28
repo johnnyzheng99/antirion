@@ -1,4 +1,5 @@
 import type { ModelView } from '@/features/models/types';
+import type { ProviderResource } from '@/lib/api/types';
 
 /** Playground endpoint ids and their data-plane paths (kept in sync with `crates/antirion-admin/src/playground.rs`). */
 export type Endpoint =
@@ -9,7 +10,8 @@ export type Endpoint =
   | 'speech'
   | 'transcriptions'
   | 'rerank'
-  | 'decisions';
+  | 'decisions'
+  | 'systemone';
 
 export const ENDPOINTS: { value: Endpoint; label: string; path: string }[] = [
   { value: 'chat_completions', label: 'Chat', path: '/v1/chat/completions' },
@@ -20,7 +22,11 @@ export const ENDPOINTS: { value: Endpoint; label: string; path: string }[] = [
   { value: 'transcriptions', label: 'Speech-to-text', path: '/v1/audio/transcriptions' },
   { value: 'rerank', label: 'Rerank', path: '/v1/rerank' },
   { value: 'decisions', label: 'Decisions', path: '/v1/decisions' },
+  { value: 'systemone', label: 'System One', path: '/v1/systemone' },
 ];
+
+/** Segmented control in the playground (System One is reached via Decisions + model provider). */
+export const PLAYGROUND_ENDPOINTS = ENDPOINTS.filter((e) => e.value !== 'systemone');
 
 export function isEndpoint(value: unknown): value is Endpoint {
   return ENDPOINTS.some((e) => e.value === value);
@@ -40,14 +46,15 @@ export function endpointAllowsStream(endpoint: Endpoint): boolean {
   return endpointUsesChatForm(endpoint);
 }
 
-/** Whether a catalog model can answer `POST /v1/decisions` via Clef, System One, or a capable deployment. */
+/** Whether a catalog model belongs in the Decisions form. */
 export function modelEligibleForDecisions(view: ModelView): boolean {
-  if (/clef|systemone/i.test(view.name)) return true;
-  if (view.upstream.some((u) => /clef|systemone/i.test(u))) return true;
-  return view.providers.includes('cloudflare');
+  if (/clef|systemone|jev|decision/i.test(view.name)) return true;
+  if (view.upstream.some((u) => /clef|systemone|jev/i.test(u))) return true;
+  if (view.providers.some((p) => /decision/i.test(p)) || view.providers.includes('cloudflare')) return true;
+  return false;
 }
 
-/** Models offered for the active endpoint (Decisions is not chat — local LLM routes lack `/v1/decisions`). */
+/** Models offered for the Decisions tab. */
 export function playgroundModelsForEndpoint(views: ModelView[], endpoint: Endpoint): ModelView[] {
   if (endpoint !== 'decisions') return views;
   const eligible = views.filter(modelEligibleForDecisions);
@@ -64,4 +71,43 @@ export function defaultModelForEndpoint(views: ModelView[], endpoint: Endpoint, 
     list.find((v) => v.enabled) ??
     list[0];
   return pick?.name ?? current;
+}
+
+/**
+ * Data-plane path for a Decisions-tab send: Cloudflare Clef and OpenAI-family providers use
+ * `/v1/decisions` (the gateway maps Cloudflare to Workers AI `/run/...`); everything else uses
+ * TypeSafe `/v1/systemone`.
+ */
+export function decisionDataPlaneEndpoint(
+  view: ModelView,
+  providers: Map<string, ProviderResource>,
+): 'decisions' | 'systemone' {
+  if (view.providers.includes('cloudflare')) return 'decisions';
+  for (const name of view.providers) {
+    const t = providers.get(name)?.spec.type;
+    if (t === 'openai' || t === 'azure_openai') return 'decisions';
+  }
+  return 'systemone';
+}
+
+/** Resolves the admin `endpoint` field for a playground send. */
+export function playgroundSendEndpoint(
+  formEndpoint: Endpoint,
+  view: ModelView | undefined,
+  providers: Map<string, ProviderResource>,
+): Endpoint {
+  if (formEndpoint !== 'decisions' || !view) return formEndpoint;
+  return decisionDataPlaneEndpoint(view, providers);
+}
+
+/** Drops streaming flags on bodies for endpoints that never stream. */
+export function sanitizePlaygroundBody(
+  endpoint: Endpoint,
+  body: Record<string, unknown>,
+): Record<string, unknown> {
+  if (endpointAllowsStream(endpoint)) return body;
+  const out = { ...body };
+  delete out.stream;
+  delete out.stream_options;
+  return out;
 }

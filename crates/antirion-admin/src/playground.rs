@@ -64,6 +64,7 @@ const ENDPOINTS: &[(&str, &str)] = &[
     ("transcriptions", "/v1/audio/transcriptions"),
     ("rerank", "/v1/rerank"),
     ("decisions", "/v1/decisions"),
+    ("systemone", "/v1/systemone"),
 ];
 
 /// Playground-only: a base64 audio file the admin API encodes as multipart for STT.
@@ -229,6 +230,12 @@ async fn send(
     if stream == Some(true) && let Some(o) = body.as_object_mut() {
         o.insert("stream".into(), Value::Bool(true));
     }
+    if matches!(path, "/v1/decisions" | "/v1/systemone" | "/v1/rerank")
+        && let Some(o) = body.as_object_mut()
+    {
+        o.remove("stream");
+        o.remove("stream_options");
+    }
     let (payload, content_type) = encode_body(path, body)?;
     let mut req = http::Request::builder()
         .method(Method::POST)
@@ -341,7 +348,7 @@ pub(crate) async fn playground_send(call: &Call) -> Result<Response, AdminError>
     let path = path_of(endpoint).ok_or_else(|| {
         AdminError::invalid_parameter(
             "endpoint must be one of chat_completions, responses, messages, embeddings, speech, \
-             transcriptions, rerank, or decisions",
+             transcriptions, rerank, decisions, or systemone",
         )
     })?;
     let body = m
@@ -542,6 +549,7 @@ mod tests {
         );
         assert_eq!(path_of("messages"), Some("/v1/messages"));
         assert_eq!(path_of("decisions"), Some("/v1/decisions"));
+        assert_eq!(path_of("systemone"), Some("/v1/systemone"));
         assert_eq!(path_of("images"), None);
     }
 

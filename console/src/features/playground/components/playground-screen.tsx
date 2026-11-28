@@ -13,7 +13,7 @@ import { ModelMark } from '@/components/ui/marks';
 import { Banner, InlineError } from '@/components/ui/states';
 import type { ProjectResource } from '@/lib/api/types';
 
-import { useModelViews } from '@/features/models/hooks';
+import { useModelViews, useProviderMap } from '@/features/models/hooks';
 import { useCatalog, useModels } from '@/features/models/store';
 import { storedBody } from '@/features/request-log/transcript';
 
@@ -25,7 +25,6 @@ import {
   endpointAllowsStream,
   endpointOfPath,
   endpointUsesChatForm,
-  ENDPOINTS,
   isEndpoint,
   parseBody,
   parseObject,
@@ -34,7 +33,10 @@ import {
 } from '../body';
 import {
   defaultModelForEndpoint,
+  PLAYGROUND_ENDPOINTS,
   playgroundModelsForEndpoint,
+  playgroundSendEndpoint,
+  sanitizePlaygroundBody,
 } from '../endpoints';
 import { usePlaygroundDraft } from '../draft';
 import { useSend } from '../use-send';
@@ -133,6 +135,7 @@ function Playground() {
   const modelsError = useModels((s) => s.error);
   const loadCatalog = useCatalog((s) => s.loadCatalog);
   const views = useModelViews();
+  const providers = useProviderMap();
 
   const endpointViews = playgroundModelsForEndpoint(views, editor.composer.endpoint);
   const fallbackModel =
@@ -262,13 +265,16 @@ function Playground() {
       return;
     }
     setShowErrors(false);
+    const modelView = views.find((v) => v.name === composer.model);
+    const sendEndpoint = playgroundSendEndpoint(composer.endpoint, modelView, providers);
+    const payload = sanitizePlaygroundBody(sendEndpoint, {
+      ...body,
+      ...(mode === 'json' && typeof body.model === 'string' ? {} : { model: composer.model }),
+    });
     send({
       project: projectName,
-      endpoint: composer.endpoint,
-      body: {
-        ...body,
-        ...(mode === 'json' && typeof body.model === 'string' ? {} : { model: composer.model }),
-      },
+      endpoint: sendEndpoint,
+      body: payload,
       stream: endpointAllowsStream(composer.endpoint) && composer.stream,
     });
   }
@@ -377,7 +383,7 @@ function Playground() {
               className="self-start max-sm:w-full max-sm:overflow-x-auto max-sm:flex-wrap"
               value={composer.endpoint}
               onChange={setEndpoint}
-              options={ENDPOINTS.map((e) => ({ value: e.value, label: e.label }))}
+              options={PLAYGROUND_ENDPOINTS.map((e) => ({ value: e.value, label: e.label }))}
             />
           </div>
           {mode === 'form' ? (

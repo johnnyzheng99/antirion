@@ -424,6 +424,26 @@ impl DeploymentRt {
             .unwrap_or(self.default_max_tokens.max(1))
     }
 
+    /// Removes OpenAI-only streaming members after every other body edit (route params, provider
+    /// params, shaping). Workers AI `/run/{model}` rejects even `stream: false`.
+    fn strip_non_streaming_fields(op: UpstreamOp<'_>, body: &mut Payload) {
+        let UpstreamOp::OpenAi { class, .. } = op else {
+            return;
+        };
+        if !workers_ai_run_class(class) {
+            return;
+        }
+        let Ok(mut v) = serde_json::from_slice::<Value>(&body.contiguous()) else {
+            return;
+        };
+        let Some(o) = v.as_object_mut() else {
+            return;
+        };
+        o.remove("stream");
+        o.remove("stream_options");
+        *body = Payload::from(serde_json::to_vec(&v).unwrap_or_default());
+    }
+
     /// The body with the provider's model placement and envelope changes (in order: model, envelope,
     /// default `max_tokens`); the flags of the `anthropic-beta` header, and whether a platform table
     /// dropped client flags.
@@ -556,6 +576,7 @@ impl DeploymentRt {
                 .apply(&mut v, &mut applied, crate::params::Source::Deployment);
             body = Payload::from(serde_json::to_vec(&v).unwrap_or_default());
         }
+        Self::strip_non_streaming_fields(call.op, &mut body);
         let mut headers = HeaderMap::new();
         if let Some(ct) = call.content_type {
             headers.insert(CONTENT_TYPE, ct);

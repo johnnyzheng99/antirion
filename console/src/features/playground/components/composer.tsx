@@ -105,12 +105,45 @@ export function ComposerForm({
             onKeyDown={submitOnModEnter}
           />
         </Field>
-        <Field label="Voice" hint="Provider voice id (e.g. alloy)." error={errors.voice}>
+        <Field label="Voice" hint="Provider voice id (e.g. alloy or a Cloudflare speaker)." error={errors.voice}>
           <input
             className="mono w-full rounded-control border border-line bg-surface px-3 py-2 text-ui text-fg"
             value={value.voice}
             onChange={(e) => set('voice', e.target.value)}
           />
+        </Field>
+        <Field
+          label="Reference audio"
+          optional
+          hint="Optional clip for voice-cloning style models (sent as reference_audio in the JSON body)."
+        >
+          <div>
+            <input
+              type="file"
+              accept="audio/*"
+              className="text-ui text-fg file:mr-3 file:rounded-control file:border-0 file:bg-raised file:px-3 file:py-1.5 file:text-ui"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (!file) {
+                  set('speechRefFileName', '');
+                  set('speechRefFileBase64', '');
+                  return;
+                }
+                const reader = new FileReader();
+                reader.onload = () => {
+                  const raw = typeof reader.result === 'string' ? reader.result : '';
+                  const base64 = raw.includes(',') ? (raw.split(',')[1] ?? '') : raw;
+                  onChange({ ...value, speechRefFileName: file.name, speechRefFileBase64: base64 });
+                };
+                reader.readAsDataURL(file);
+              }}
+            />
+            {value.speechRefFileName ? (
+              <p className="mt-1.5 text-caption text-muted">
+                Selected <span className="mono text-fg">{value.speechRefFileName}</span>
+              </p>
+            ) : null}
+          </div>
         </Field>
       </div>
     );
@@ -197,9 +230,9 @@ export function ComposerForm({
           <Textarea rows={10} mono value={value.decisionQuestions} onChange={(e) => set('decisionQuestions', e.target.value)} />
         </Field>
         <p className="text-caption text-muted">
-          Choose <span className="mono text-fg">clef-flash</span> (Cloudflare Clef). Local chat servers such as{' '}
-          <span className="mono text-fg">aiserver2decision/jev</span> speak chat, not{' '}
-          <span className="mono text-fg">/v1/decisions</span>, unless you add that route on the server.
+          <span className="mono text-fg">clef-flash</span> goes to Cloudflare via{' '}
+          <span className="mono text-fg">POST /v1/decisions</span> (Workers AI run). Local Jev routes use{' '}
+          <span className="mono text-fg">POST /v1/systemone</span> automatically.
         </p>
       </div>
     );

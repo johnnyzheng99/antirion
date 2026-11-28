@@ -44,6 +44,9 @@ export interface Composer {
   /** Speech-to-text (uploaded file, base64 without a data-URL prefix) */
   audioFileName: string;
   audioFileBase64: string;
+  /** Text-to-speech reference clip for voice-cloning style models (optional, base64). */
+  speechRefFileName: string;
+  speechRefFileBase64: string;
   /** Decisions / System One (Clef, Jev, …) */
   decisionState: string;
   decisionQuestions: string;
@@ -72,6 +75,8 @@ export function emptyComposer(endpoint: Endpoint = 'chat_completions', model = '
     rerankTopN: '',
     audioFileName: '',
     audioFileBase64: '',
+    speechRefFileName: '',
+    speechRefFileBase64: '',
     decisionState: 'Describe the situation to decide on.',
     decisionQuestions: JSON.stringify(
       {
@@ -188,7 +193,14 @@ export function buildBody(c: Composer): Json {
     return { model: c.model, input: inputs.length === 1 ? inputs[0] : inputs };
   }
   if (c.endpoint === 'speech') {
-    return { model: c.model, input: c.speechInput.trim(), voice: c.voice.trim() };
+    const body: Json = { model: c.model, input: c.speechInput.trim(), voice: c.voice.trim() };
+    if (c.speechRefFileBase64) {
+      body.reference_audio = {
+        filename: c.speechRefFileName.trim() || 'reference.wav',
+        data: c.speechRefFileBase64,
+      };
+    }
+    return body;
   }
   if (c.endpoint === 'transcriptions') {
     return {
@@ -277,6 +289,11 @@ export function parseBody(endpoint: Endpoint, body: unknown): { composer: Compos
   } else if (endpoint === 'speech') {
     if (typeof body.input === 'string') c.speechInput = body.input;
     if (typeof body.voice === 'string') c.voice = body.voice;
+    const ref = body.reference_audio;
+    if (isObject(ref)) {
+      if (typeof ref.filename === 'string') c.speechRefFileName = ref.filename;
+      if (typeof ref.data === 'string') c.speechRefFileBase64 = ref.data;
+    }
   } else if (endpoint === 'transcriptions') {
     const f = body[PLAYGROUND_FILE];
     if (isObject(f)) {
